@@ -218,6 +218,67 @@ function extraDeckKind(card) {
   return null
 }
 
+function activationSummonRestrictions(card, selectedEffect) {
+  const selectedSentences = normalizeEffectText(selectedEffect).split(/(?<=[.!?])\s+|\n+/)
+  const activationWideSentences = normalizeEffectText(card.description)
+      .split(/(?<=[.!?])\s+|\n+/)
+      .filter(sentence => /(?:the turn you activate this card|for the rest of this turn|during this turn|after this effect resolves|this turn,\s+you cannot special summon)/i.test(sentence))
+  const uniqueSentences = [...new Set([...selectedSentences, ...activationWideSentences])]
+
+  return uniqueSentences
+      .filter(sentence => /cannot special summon/i.test(sentence))
+      .map(sentence => {
+        const allowedMatch = sentence.match(
+            /except\s+(.+?)(?=,?\s+(?:the turn|for the rest|during this turn|after this effect)|[.;]|$)/i,
+        )
+        return {
+          id: `${card.id ?? card.name}:${sentence.toLowerCase()}`,
+          sourceCard: card.name,
+          text: sentence.trim(),
+          scope: /special summon from (?:your |the )?extra deck/i.test(sentence) ? 'extraDeck' : 'all',
+          allowed: allowedMatch?.[1]?.trim() || '',
+        }
+      })
+}
+
+function restrictionAllowsCard(restriction, card, fromExtraDeck) {
+  if (restriction.scope === 'extraDeck' && !fromExtraDeck) return true
+  const allowed = restriction.allowed.toLowerCase()
+  if (!allowed) return false
+
+  const type = (card.type || '').toLowerCase()
+  const name = (card.name || '').toLowerCase()
+  const archetype = (card.archetype || '').toLowerCase()
+  const attribute = (card.attribute || '').toLowerCase()
+  const race = (card.race || '').toLowerCase()
+
+  for (const kind of ['fusion', 'synchro', 'xyz', 'link', 'ritual', 'pendulum']) {
+    if (new RegExp(`\\b${kind} monsters?\\b`).test(allowed) && type.includes(kind)) return true
+  }
+  for (const allowedAttribute of ['dark', 'light', 'earth', 'water', 'fire', 'wind', 'divine']) {
+    if (new RegExp(`\\b${allowedAttribute} monsters?\\b`).test(allowed)
+        && attribute === allowedAttribute) return true
+  }
+  if (allowed.includes(`${race} monster`) && race) return true
+
+  const quotedFamilies = [...restriction.allowed.matchAll(/"([^"]+)"/g)]
+      .map(match => match[1].toLowerCase())
+  if (quotedFamilies.some(family => name.includes(family) || archetype.includes(family))) return true
+
+  const plainFamily = allowed
+      .replace(/\b(?:monsters?|cards?|except|only)\b/g, '')
+      .replace(/["']/g, '')
+      .trim()
+  return Boolean(plainFamily && (name.includes(plainFamily) || archetype.includes(plainFamily)))
+}
+
+function summonRestrictionReason(restrictions, card, fromExtraDeck, isSpecialSummon = true) {
+  if (!isSpecialSummon) return null
+  const blocking = restrictions.find(restriction =>
+    !restrictionAllowsCard(restriction, card, fromExtraDeck))
+  return blocking ? `${blocking.sourceCard}: ${blocking.text}` : null
+}
+
 function materialRequirement(card) {
   return normalizeEffectText(card.description)
       .split('\n')
@@ -448,6 +509,7 @@ function cardEffectOptions(card, zone = null, entry = null) {
       .filter(text => text.length > 0)
       .filter(text => !/^[●•▪◦-]\s*/.test(text))
       .filter(text => !/^you can only (?:use|activate)\b/i.test(text))
+      .filter(text => !/^you cannot special summon\b/i.test(text))
       .filter(text => /\b(you can|add|draw|summon|place|set|send|discard|tribute|banish|destroy|return|target|activate)\b/i.test(text))
       .map(text => ({
         text,
@@ -730,18 +792,22 @@ function EffectPicker({ selection, activatedEffects, onChoose, onCancel }) {
           <div className="effect-picker-options">
             {selection.effects.map((effect, index) => {
               const used = activatedEffects.includes(effectUsageKey(selection.entry, effect))
+              const unavailableReason = effect.unavailableReason || ''
+              const unavailable = used || Boolean(unavailableReason)
               const optionalClause = optionalEffectClause(effect.text)
               if (optionalClause) {
                 return (
                     <div
                         key={`${effect.sourceZone}-${effect.text}`}
-                        className={`effect-choice effect-choice-optional${used ? ' is-used' : ''}`}
+                        className={`effect-choice effect-choice-optional${unavailable ? ' is-used' : ''}`}
                     >
                       <span className="effect-choice-number">Effect {index + 1}</span>
                       <span className="effect-choice-zone">From: {effect.sourceZone}</span>
                       <span className="effect-choice-text">{effect.text}</span>
                       {used
                         ? <span className="effect-choice-used">Already activated</span>
+                        : unavailableReason
+                          ? <span className="effect-choice-unavailable">Unavailable: {unavailableReason}</span>
                         : (
                             <div className="optional-effect-actions">
                               <button type="button" onClick={() => onChoose(effect, false)}>
@@ -761,12 +827,16 @@ function EffectPicker({ selection, activatedEffects, onChoose, onCancel }) {
                       type="button"
                       className="effect-choice"
                       onClick={() => onChoose(effect, false)}
-                      disabled={used}
+                      disabled={unavailable}
+                      title={unavailableReason || undefined}
                   >
                     <span className="effect-choice-number">Effect {index + 1}</span>
                     <span className="effect-choice-zone">From: {effect.sourceZone}</span>
                     <span className="effect-choice-text">{effect.text}</span>
                     {used && <span className="effect-choice-used">Already activated</span>}
+                    {!used && unavailableReason && (
+                        <span className="effect-choice-unavailable">Unavailable: {unavailableReason}</span>
+                    )}
                   </button>
               )
             })}
@@ -776,7 +846,7 @@ function EffectPicker({ selection, activatedEffects, onChoose, onCancel }) {
   )
 }
 
-function ExtraDeckSummonPicker({ zones, onSummon, onCancel }) {
+function ExtraDeckSummonPicker({ zones, summonRestrictions, onSummon, onCancel }) {
   const [kind, setKind] = useState('Synchro')
   const [search, setSearch] = useState('')
   const [results, setResults] = useState([])
@@ -871,14 +941,15 @@ function ExtraDeckSummonPicker({ zones, onSummon, onCancel }) {
             {!loading && results.map(card => {
               const materials = findLegalExtraDeckMaterials(card, availableMaterials)
               const requirement = materialRequirement(card)
+              const restrictionReason = summonRestrictionReason(summonRestrictions, card, true)
               return (
                   <button
                       key={card.id ?? card.name}
                       type="button"
                       role="option"
                       aria-selected="false"
-                      className={`extra-deck-result${materials ? ' legal' : ' illegal'}`}
-                      disabled={!materials}
+                      className={`extra-deck-result${materials && !restrictionReason ? ' legal' : ' illegal'}`}
+                      disabled={!materials || Boolean(restrictionReason)}
                       onClick={() => onSummon(card, materials)}
                   >
                     <span className="extra-deck-result-heading">
@@ -887,7 +958,9 @@ function ExtraDeckSummonPicker({ zones, onSummon, onCancel }) {
                     </span>
                     <span className="extra-deck-requirement">{requirement}</span>
                     <span className="extra-deck-legality">
-                      {materials
+                      {restrictionReason
+                        ? `Locked: ${restrictionReason}`
+                        : materials
                         ? `Summon using: ${materials.map(entry => entry.card.name).join(' + ')}`
                         : 'Current Monster Zone does not meet this card’s requirements.'}
                     </span>
@@ -920,8 +993,7 @@ function MaterialPicker({
       (slot, index) => (selections[index]?.length ?? 0) === slot.count,
   )
   const availableFrom = (materialPlan?.availableFrom || '').toLowerCase()
-  const hasOpenCardPool = availableFrom.includes('hand')
-      || (availableFrom.includes('deck') && !availableFrom.includes('extra deck'))
+  const hasOpenCardPool = availableFrom.includes('deck') && !availableFrom.includes('extra deck')
   const isTributePlan = (materialPlan?.action || '').toLowerCase().includes('tribute')
 
   function simulatedLocations(card) {
@@ -1121,6 +1193,91 @@ function ComboOptionCard({ option, comboPath, onChooseCard, timingLockReason }) 
   )
 }
 
+function SummonTargetPicker({
+  sourceCard,
+  options,
+  comboPath,
+  timingLockReason,
+  onChooseCard,
+  onCancel,
+}) {
+  const [search, setSearch] = useState('')
+  const normalizedSearch = search.trim().toLowerCase()
+  const filteredOptions = options.filter(option => {
+    if (!normalizedSearch) return true
+    return [
+      option.card.name,
+      option.card.type,
+      option.card.archetype,
+      option.label,
+      option.reason,
+      option.cost,
+    ].some(value => (value || '').toLowerCase().includes(normalizedSearch))
+  })
+  const resultLimit = 50
+  const visibleOptions = filteredOptions.slice(0, resultLimit)
+
+  function chooseOption(option) {
+    onCancel()
+    onChooseCard(option)
+  }
+
+  return (
+      <div className="material-picker-backdrop" role="presentation">
+        <section
+            className="extra-deck-picker route-cost-picker summon-target-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="summon-target-picker-title"
+        >
+          <div className="material-picker-header">
+            <div>
+              <div className="material-picker-kicker">Choose Summon Target</div>
+              <h3 id="summon-target-picker-title">{sourceCard.name}</h3>
+            </div>
+            <button type="button" className="material-picker-close" onClick={onCancel}>Close</button>
+          </div>
+
+          <div className="summon-target-controls">
+            <label htmlFor="summon-target-search">Search legal target</label>
+            <input
+                id="summon-target-search"
+                className="material-search"
+                autoFocus
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Type a card name, type, archetype, or material..."
+            />
+          </div>
+
+          <div className="extra-deck-field-summary summon-target-summary">
+            <strong>{filteredOptions.length} matching targets</strong>
+            <span>{options.length} legal summon routes are available from this effect.</span>
+          </div>
+
+          <div className="summon-target-results" aria-label="Legal summon targets">
+            {visibleOptions.length === 0 ? (
+                <div className="material-no-results">No legal summon targets match this filter.</div>
+            ) : visibleOptions.map(option => (
+                <ComboOptionCard
+                    key={option.card.id ?? option.card.name}
+                    option={option}
+                    comboPath={comboPath}
+                    onChooseCard={chooseOption}
+                    timingLockReason={timingLockReason(option)}
+                />
+            ))}
+            {filteredOptions.length > resultLimit && (
+                <div className="material-result-cap">
+                  Showing {resultLimit} of {filteredOptions.length} targets. Narrow the search to find a specific card.
+                </div>
+            )}
+          </div>
+        </section>
+      </div>
+  )
+}
+
 function CardDetail({
   card,
   oncePerTurn,
@@ -1128,9 +1285,11 @@ function CardDetail({
   comboPath,
   comboOptions,
   comboLoading,
+  canGoBack,
   onChooseCard,
   onBackCombo,
   zones,
+  summonRestrictions,
   activatedEffects,
   onRequestEffect,
   activeEffect,
@@ -1142,6 +1301,7 @@ function CardDetail({
   placementPending,
   onPlaceSearchResult,
 }) {
+  const [summonTargetPickerOpen, setSummonTargetPickerOpen] = useState(false)
   const color = typeColor(card.type)
   const t = (card.type || '').toLowerCase()
   const isMonster = t.includes('monster')
@@ -1153,12 +1313,27 @@ function CardDetail({
   const continuingOptions = comboOptions?.filter(option => option.label !== 'ender') ?? []
   const enderOptions = comboOptions?.filter(option => option.label === 'ender') ?? []
 
+  useEffect(() => {
+    setSummonTargetPickerOpen(false)
+  }, [card.id, activeEffect?.text])
+
   function timingLockReason(option) {
     const destination = (option.destination || '').toLowerCase()
     const targetType = (option.card.type || '').toLowerCase()
     const mainMonsterCount = zones.monsterZone.length
     const spellTrapCount = zones.spellTrapZone.length
     const pendulumCount = zones.pendulumZone.length
+    const fromExtraDeck = destination.includes('extra deck') || isExtraDeckMonster(option.card)
+    const isSpecialSummon = destination.includes('monster zone')
+        && (fromExtraDeck || /special summon|fusion summon/i.test(activeEffect?.text || ''))
+    const activeRestriction = summonRestrictionReason(
+        summonRestrictions,
+        option.card,
+        fromExtraDeck,
+        isSpecialSummon,
+    )
+
+    if (activeRestriction) return activeRestriction
 
     if (destination.includes('monster zone')
         && targetType.includes('monster')
@@ -1174,6 +1349,24 @@ function CardDetail({
     }
     return null
   }
+
+  const sourceCanOpenSummonPicker = /monster|spell/i.test(card.type || '')
+      && /(?:fusion|special) summon/i.test(activeEffect?.text || '')
+  const summonTargetOptions = sourceCanOpenSummonPicker
+    ? comboOptions.filter(option => {
+      const destination = (option.destination || '').toLowerCase()
+      return isMonsterCard(option.card)
+          && (destination.includes('monster zone') || /fusion target|summon/i.test(option.label || ''))
+    })
+    : []
+  const useSummonTargetPicker = summonTargetOptions.length >= 10
+  const summonTargetIds = new Set(summonTargetOptions.map(option => option.card.id ?? option.card.name))
+  const inlineContinuingOptions = useSummonTargetPicker
+    ? continuingOptions.filter(option => !summonTargetIds.has(option.card.id ?? option.card.name))
+    : continuingOptions
+  const inlineEnderOptions = useSummonTargetPicker
+    ? enderOptions.filter(option => !summonTargetIds.has(option.card.id ?? option.card.name))
+    : enderOptions
 
   return (
       <div className="wiki-card">
@@ -1288,7 +1481,7 @@ function CardDetail({
                     type="button"
                     className="combo-back-btn"
                     onClick={onBackCombo}
-                    disabled={comboPath.length <= 1}
+                    disabled={!canGoBack}
                 >
                   Back
                 </button>
@@ -1309,6 +1502,15 @@ function CardDetail({
                 )}
               </div>
 
+              {summonRestrictions.length > 0 && (
+                  <div className="active-summon-restrictions" role="status">
+                    <strong>Active summon restriction</strong>
+                    {summonRestrictions.map(restriction => (
+                        <span key={restriction.id}>{restriction.sourceCard}: {restriction.text}</span>
+                    ))}
+                  </div>
+              )}
+
               {comboLoading ? (
                   <div className="wiki-combo-loading">Loading next combo options...</div>
               ) : !activeEffect ? (
@@ -1317,11 +1519,25 @@ function CardDetail({
                   </div>
               ) : comboOptions && comboOptions.length > 0 ? (
                   <div className="combo-option-groups">
-                    {continuingOptions.length > 0 && (
+                    {useSummonTargetPicker && (
+                        <section className="combo-option-group summon-target-launch-group">
+                          <div className="combo-option-group-title">Special Summon Targets</div>
+                          <button
+                              type="button"
+                              className="summon-target-launch"
+                              onClick={() => setSummonTargetPickerOpen(true)}
+                          >
+                            <span>Search summon targets</span>
+                            <strong>{summonTargetOptions.length}</strong>
+                            <small>Choose by card name, type, archetype, or material requirement</small>
+                          </button>
+                        </section>
+                    )}
+                    {inlineContinuingOptions.length > 0 && (
                         <section className="combo-option-group">
                           <div className="combo-option-group-title">Continue Combo</div>
                           <div className="combo-option-grid">
-                            {continuingOptions.map(option => (
+                            {inlineContinuingOptions.map(option => (
                                 <ComboOptionCard
                                     key={option.card.id ?? option.card.name}
                                     option={option}
@@ -1333,11 +1549,11 @@ function CardDetail({
                           </div>
                         </section>
                     )}
-                    {enderOptions.length > 0 && (
+                    {inlineEnderOptions.length > 0 && (
                         <section className="combo-option-group enders">
                           <div className="combo-option-group-title">Combo Enders</div>
                           <div className="combo-option-grid">
-                            {enderOptions.map(option => (
+                            {inlineEnderOptions.map(option => (
                                 <ComboOptionCard
                                     key={option.card.id ?? option.card.name}
                                     option={option}
@@ -1356,6 +1572,17 @@ function CardDetail({
                   </div>
               )}
             </div>
+
+            {summonTargetPickerOpen && (
+                <SummonTargetPicker
+                    sourceCard={card}
+                    options={summonTargetOptions}
+                    comboPath={comboPath}
+                    timingLockReason={timingLockReason}
+                    onChooseCard={onChooseCard}
+                    onCancel={() => setSummonTargetPickerOpen(false)}
+                />
+            )}
 
             </div>
           </div>
@@ -1410,6 +1637,7 @@ export default function App() {
   const [zones, setZones] = useState(emptyZones)
   const [comboHistory, setComboHistory] = useState([])
   const [activatedEffects, setActivatedEffects] = useState([])
+  const [summonRestrictions, setSummonRestrictions] = useState([])
   const [activeZoneContext, setActiveZoneContext] = useState(null)
   const [selectedEntry, setSelectedEntry] = useState(null)
   const [activeEffect, setActiveEffect] = useState(null)
@@ -1438,6 +1666,7 @@ export default function App() {
       comboOptions,
       zones,
       activatedEffects,
+      summonRestrictions,
       activeZoneContext,
       selected,
       selectedEntry,
@@ -1468,15 +1697,28 @@ export default function App() {
     setComboLoading(true)
     setComboOptions([])
     try {
+      const effectText = typeof effect === 'string' ? effect : effect?.text
       const zoneQuery = zoneContext ? `&zone=${encodeURIComponent(zoneContext)}` : ''
-      const effectQuery = effect ? `&effect=${encodeURIComponent(effect)}` : ''
+      const effectQuery = effectText ? `&effect=${encodeURIComponent(effectText)}` : ''
       const res = await fetch(
           `${API}/yugioh/card/combos?name=${encodeURIComponent(card.name)}${zoneQuery}${effectQuery}`,
       )
       if (!res.ok) throw new Error('Failed to load combo options')
       const data = await res.json()
       if (comboRequestId.current === requestId) {
-        setComboOptions(Array.isArray(data) ? data : [])
+        let options = Array.isArray(data) ? data : []
+        if (Array.isArray(effect?.legalSummonTargets)) {
+          const legalTargetNames = new Set(
+              effect.legalSummonTargets.map(name => name.toLocaleLowerCase()),
+          )
+          options = options.filter(option => {
+            const destination = (option.destination || '').toLowerCase()
+            const isSummonTarget = isMonsterCard(option.card)
+                && (destination.includes('monster zone') || /fusion target|summon/i.test(option.label || ''))
+            return !isSummonTarget || legalTargetNames.has(option.card.name.toLocaleLowerCase())
+          })
+        }
+        setComboOptions(options)
       }
     } catch {
       if (comboRequestId.current === requestId) {
@@ -1549,6 +1791,7 @@ export default function App() {
     setZones(emptyZones())
     setComboHistory([])
     setActivatedEffects([])
+    setSummonRestrictions([])
     setActiveZoneContext(null)
     setSelectedEntry(null)
     setActiveEffect(null)
@@ -1657,6 +1900,11 @@ export default function App() {
   }
 
   async function performExtraDeckSummon(card, materials) {
+    const activeRestriction = summonRestrictionReason(summonRestrictions, card, true)
+    if (activeRestriction) {
+      setError(activeRestriction)
+      return
+    }
     const legalMaterials = findLegalExtraDeckMaterials(card, [...zones.monsterZone, ...zones.extraMonsterZone])
     const selectedIds = new Set(materials.map(entry => entry.instanceId))
     const stillLegal = legalMaterials
@@ -1730,6 +1978,20 @@ export default function App() {
       return
     }
 
+    const restrictedEntry = chosen.find(entry => summonRestrictionReason(
+        summonRestrictions,
+        entry.card,
+        entry.pendulumSource === 'extraDeck',
+    ))
+    if (restrictedEntry) {
+      setError(summonRestrictionReason(
+          summonRestrictions,
+          restrictedEntry.card,
+          restrictedEntry.pendulumSource === 'extraDeck',
+      ))
+      return
+    }
+
     const fromExtra = chosen.filter(entry => entry.pendulumSource === 'extraDeck')
     const fromHand = chosen.filter(entry => entry.pendulumSource === 'hand')
     const mainOpen = 5 - zones.monsterZone.length
@@ -1789,6 +2051,19 @@ export default function App() {
         : destination.includes('hand')
           ? 'hand'
         : null
+    const fromExtraDeck = destination.includes('extra deck') || isExtraDeckMonster(card)
+    const isSpecialSummon = destinationZone === 'monsterZone'
+        && (fromExtraDeck || /special summon|fusion summon/i.test(activeEffect?.text || ''))
+    const activeRestriction = summonRestrictionReason(
+        summonRestrictions,
+        card,
+        fromExtraDeck,
+        isSpecialSummon,
+    )
+    if (activeRestriction) {
+      setError(activeRestriction)
+      return
+    }
     const treatedAs = destination.includes('continuous trap')
       ? 'Continuous Trap'
       : destination.includes('continuous spell')
@@ -1970,6 +2245,42 @@ export default function App() {
     await finishComboChoice(option, materials, destination, paymentReason)
   }
 
+  function effectNeedsPrerequisiteCheck(effect) {
+    const costClause = effect.text.split(';', 1)[0]
+    return /\b(?:discard|tribute)\b/i.test(costClause)
+        || /\b(?:fusion|synchro|xyz) summon\b/i.test(effect.text)
+  }
+
+  async function effectPrerequisiteResult(card, effect, zone) {
+    if (!effectNeedsPrerequisiteCheck(effect)) {
+      return { available: true, reason: '', legalSummonTargets: null }
+    }
+    const zonesPayload = Object.fromEntries(ZONE_KEYS.map(zoneName => [
+      zoneName,
+      zones[zoneName].map(zoneEntryValue => zoneEntryValue.card.name),
+    ]))
+    try {
+      const response = await fetch(`${API}/yugioh/card/effect-prerequisites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: card.name,
+          effect: effect.text,
+          sourceZone: zone,
+          zones: zonesPayload,
+        }),
+      })
+      if (!response.ok) throw new Error('Prerequisite check failed')
+      return await response.json()
+    } catch {
+      return {
+        available: false,
+        reason: 'The app could not verify this effect’s prerequisites.',
+        legalSummonTargets: [],
+      }
+    }
+  }
+
   async function requestEffectActivation(entry = selectedEntry, zone = activeZoneContext) {
     if (!entry || !zone) {
       setError('Place the card in a zone before activating one of its effects.')
@@ -1987,7 +2298,16 @@ export default function App() {
     setSelected(card)
     setSelectedEntry(resolvedEntry)
     setActiveZoneContext(zone)
-    setEffectSelection({ card, entry: resolvedEntry, zone, effects })
+    const checkedEffects = await Promise.all(effects.map(async effect => {
+      const prerequisite = await effectPrerequisiteResult(card, effect, zone)
+      return {
+        ...effect,
+        prerequisitesChecked: true,
+        legalSummonTargets: prerequisite.legalSummonTargets,
+        ...(!prerequisite.available ? { unavailableReason: prerequisite.reason } : {}),
+      }
+    }))
+    setEffectSelection({ card, entry: resolvedEntry, zone, effects: checkedEffects })
     await fetchCardExtras(card)
   }
 
@@ -2004,6 +2324,30 @@ export default function App() {
   async function chooseEffect(effect, applyOptional = false) {
     if (!effectSelection) return
     const { card, entry, zone } = effectSelection
+    const prerequisite = effect.prerequisitesChecked
+      ? {
+          available: !effect.unavailableReason,
+          reason: effect.unavailableReason || '',
+          legalSummonTargets: effect.legalSummonTargets ?? null,
+        }
+      : await effectPrerequisiteResult(card, effect, zone)
+    const validatedEffect = {
+      ...effect,
+      prerequisitesChecked: true,
+      legalSummonTargets: prerequisite.legalSummonTargets,
+      ...(!prerequisite.available ? { unavailableReason: prerequisite.reason } : {}),
+    }
+    const unavailableReason = validatedEffect.unavailableReason
+    if (unavailableReason) {
+      setEffectSelection(previous => previous ? {
+        ...previous,
+        effects: previous.effects.map(candidate => candidate.text === effect.text
+          ? validatedEffect
+          : candidate),
+      } : previous)
+      setError(unavailableReason)
+      return
+    }
     const placesSelfAsContinuousTrap = Boolean(entry
         && ['monsterZone', 'extraMonsterZone'].includes(zone)
         && /place this card you control[\s\S]*in your Spell & Trap Zones? as face-up Continuous Traps?/i.test(effect.text))
@@ -2020,9 +2364,16 @@ export default function App() {
     }
     setComboHistory(prev => [...prev, snapshotComboState()])
     setActivatedEffects(prev => [...prev, effectUsageKey(entry, effect)])
+    const activatedRestrictions = activationSummonRestrictions(card, effect.text)
+    if (activatedRestrictions.length > 0) {
+      setSummonRestrictions(previous => {
+        const existingIds = new Set(previous.map(restriction => restriction.id))
+        return [...previous, ...activatedRestrictions.filter(restriction => !existingIds.has(restriction.id))]
+      })
+    }
     const optionalClause = optionalEffectClause(effect.text)
     setActiveEffect({
-      ...effect,
+      ...validatedEffect,
       optionalApplied: Boolean(applyOptional && optionalClause),
     })
     setComboOptions([])
@@ -2099,7 +2450,7 @@ export default function App() {
       promptOnSummonEffects(card, summonedEntry)
     }
     const apiZone = ['graveyard', 'banished'].includes(zone) ? zone : null
-    await fetchComboOptions(card, apiZone, effect.text)
+    await fetchComboOptions(card, apiZone, validatedEffect)
   }
 
   async function goBackCombo() {
@@ -2110,6 +2461,7 @@ export default function App() {
     setComboOptions(previousState.comboOptions)
     setZones(previousState.zones)
     setActivatedEffects(previousState.activatedEffects)
+    setSummonRestrictions(previousState.summonRestrictions ?? [])
     setActiveZoneContext(previousState.activeZoneContext)
     setSelected(previousState.selected)
     setSelectedEntry(previousState.selectedEntry)
@@ -2225,9 +2577,11 @@ export default function App() {
                           comboPath={comboPath}
                           comboOptions={comboOptions}
                           comboLoading={comboLoading}
+                          canGoBack={comboHistory.length > 0}
                           onChooseCard={chooseComboOption}
                           onBackCombo={goBackCombo}
                           zones={zones}
+                          summonRestrictions={summonRestrictions}
                           activatedEffects={activatedEffects}
                           onRequestEffect={requestEffectActivation}
                           activeEffect={activeEffect}
@@ -2272,6 +2626,7 @@ export default function App() {
         {extraDeckPickerOpen && (
             <ExtraDeckSummonPicker
                 zones={zones}
+                summonRestrictions={summonRestrictions}
                 onSummon={performExtraDeckSummon}
                 onCancel={() => setExtraDeckPickerOpen(false)}
             />
