@@ -45,9 +45,9 @@ body { background: #060a12; }
 
 .app-main {
   flex: 1;
-  max-width: 1120px;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: 2.25rem 1.5rem 4rem;
+  padding: 2.25rem clamp(1rem, 2.5vw, 2.5rem) 4rem;
   width: 100%;
 }
 
@@ -161,14 +161,18 @@ body { background: #060a12; }
 
 
 .results-layout {
-  display: flex;
-  gap: 1.5rem;
+  display: grid;
+  grid-template-columns: 235px minmax(0, 1fr);
+  gap: clamp(1rem, 2vw, 1.75rem);
   align-items: flex-start;
   animation: fadeUp 0.35s ease both;
 }
 
 
-.card-list-panel { width: 270px; flex-shrink: 0; }
+.card-list-panel {
+  width: 100%;
+  min-width: 0;
+}
 
 .panel-label {
   color: #6b7285;
@@ -232,11 +236,11 @@ body { background: #060a12; }
 
 .wiki-card {
   width: 100%;
-  max-width: 960px;
+  max-width: none;
   background: #0b1420;
   border: 1px solid #1c3350;
   border-radius: 10px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255,255,255,0.03) inset;
   animation: fadeUp 0.3s ease both;
 }
@@ -244,12 +248,14 @@ body { background: #060a12; }
 
 .wiki-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 1rem;
   padding: 1.1rem 1.5rem;
   text-align: center;
   position: relative;
+  border-radius: 9px 9px 0 0;
 }
 
 .wiki-banner::after {
@@ -261,7 +267,7 @@ body { background: #060a12; }
 }
 
 .wiki-name {
-  flex: 1;
+  flex: 1 0 100%;
   margin: 0;
   font-family: 'Cinzel', serif;
   font-size: 1.4rem;
@@ -274,13 +280,31 @@ body { background: #060a12; }
   position: relative;
   z-index: 1;
   display: flex;
-  flex-shrink: 0;
-  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  flex: 1 0 100%;
+  gap: 0.65rem;
 }
 
-.card-placement-actions button {
+.card-placement-label {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.55px;
+  text-transform: uppercase;
+}
+
+.card-placement-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.card-placement-buttons button {
   min-height: 34px;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 0.7rem;
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 6px;
   background: rgba(5, 14, 24, 0.78);
@@ -292,29 +316,37 @@ body { background: #060a12; }
   backdrop-filter: blur(4px);
 }
 
-.card-placement-actions button:hover {
+.card-placement-buttons button:hover:not(:disabled),
+.card-placement-buttons button:focus-visible {
   border-color: #fff;
+  outline: none;
   background: rgba(12, 38, 48, 0.94);
+  transform: translateY(-1px);
 }
 
-.extra-deck-placement-hint {
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
-  max-width: 180px;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 0.72rem;
+.card-placement-buttons button:disabled {
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.45);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 
 .wiki-body {
-  display: flex;
-  gap: 0;
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(300px, 380px);
+  align-items: start;
+  border-radius: 0 0 9px 9px;
+}
+
+.wiki-primary-col {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: clamp(155px, 16vw, 235px) minmax(250px, 1fr);
 }
 
 .wiki-image-col {
-  width: 260px;
-  flex-shrink: 0;
+  width: 100%;
   padding: 1.25rem;
   background: #0a111c;
   border-right: 1px solid #1c3350;
@@ -362,10 +394,20 @@ body { background: #060a12; }
 .wiki-image-frame:hover .wiki-image { transform: scale(1.04); }
 
 .wiki-info-col {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.wiki-zones-col {
+  position: sticky;
+  top: 6.5rem;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  border-left: 1px solid #1c3350;
+  border-radius: 0 0 9px 0;
+  background: #08101a;
 }
 
 
@@ -838,7 +880,9 @@ body { background: #060a12; }
 .simulated-zones {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
   gap: 0.7rem;
+  height: clamp(700px, calc(100vh - 8rem), 840px);
   padding: 1rem 1.1rem 1.2rem;
   background:
     radial-gradient(circle at 50% 0%, rgba(49, 116, 112, 0.1), transparent 65%),
@@ -847,6 +891,8 @@ body { background: #060a12; }
 
 .sim-zone {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid #26384c;
   border-radius: 9px;
   background: rgba(13, 26, 44, 0.78);
@@ -920,6 +966,7 @@ body { background: #060a12; }
 .extra-deck-summon-btn,
 .pendulum-summon-btn {
   padding: 0.28rem 0.5rem;
+  margin-left: 0.25rem;
   border: 1px solid #527a9f;
   border-radius: 5px;
   background: #11283d;
@@ -1456,6 +1503,49 @@ body { background: #060a12; }
   cursor: default;
 }
 
+.effect-choice-optional {
+  cursor: default;
+}
+
+.effect-choice-optional:hover {
+  border-color: #2c4e4a;
+  background: #0d1c29;
+}
+
+.effect-choice-optional.is-used {
+  opacity: 0.42;
+}
+
+.optional-effect-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding-top: 0.25rem;
+}
+
+.optional-effect-actions button {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #48667b;
+  border-radius: 6px;
+  background: #122131;
+  color: #d9e8ee;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.optional-effect-actions button:hover {
+  border-color: #75d1b2;
+  background: #17313a;
+}
+
+.optional-effect-actions .apply-optional {
+  border-color: #62b698;
+  background: #194c41;
+}
+
 .effect-choice-number,
 .effect-choice-zone,
 .effect-choice-used {
@@ -1796,22 +1886,46 @@ body { background: #060a12; }
 ::-webkit-scrollbar-thumb:hover { background: #3a4055; }
 
 
+@media (max-width: 950px) {
+  .results-layout { grid-template-columns: 1fr; }
+  .card-list-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.4rem;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .panel-label { grid-column: 1 / -1; }
+  .card-list-item { margin-bottom: 0; }
+}
+
 @media (max-width: 700px) {
-  .results-layout { flex-direction: column; }
-  .card-list-panel { width: 100%; }
   .header-title { font-size: 1.35rem; letter-spacing: 1.8px; }
   .app-main { padding: 1.25rem 1rem 3rem; }
   .search-btn { padding: 0.85rem 1.25rem; }
-  .wiki-body { flex-direction: column; }
+  .wiki-body { grid-template-columns: 1fr; }
+  .wiki-primary-col { grid-template-columns: 1fr; }
   .wiki-banner { flex-direction: column; }
   .wiki-image-col { width: 100%; border-right: none; border-bottom: 1px solid #1c3350; }
   .wiki-image-frame { max-width: 220px; margin: 0 auto; }
+  .wiki-zones-col {
+    position: static;
+    min-height: 0;
+    max-height: none;
+    overflow-y: visible;
+    border-top: 1px solid #1c3350;
+    border-left: none;
+  }
   .wiki-row-label { width: 110px; font-size: 0.78rem; }
   .combo-builder-top { flex-direction: column; }
   .combo-back-btn { width: 100%; }
   .combo-path { padding-bottom: 0.25rem; }
   .combo-option-grid { grid-template-columns: 1fr; }
-  .simulated-zones { grid-template-columns: 1fr; }
+  .simulated-zones {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    height: auto;
+  }
   .effect-action-bar { grid-template-columns: 1fr; }
   .material-picker-backdrop { padding: 0; }
   .material-picker,
