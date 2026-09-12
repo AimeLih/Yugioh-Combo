@@ -46,6 +46,28 @@ const ZONE_KEYS = [
   'extraDeck',
 ]
 
+const ZONE_LABELS = {
+  monsterZone: 'Main Monster Zone',
+  extraMonsterZone: 'Extra Monster Zone',
+  spellTrapZone: 'Spell & Trap Zone',
+  pendulumZone: 'Pendulum Zone',
+  hand: 'Hand',
+  graveyard: 'Graveyard',
+  banished: 'Banished',
+  extraDeck: 'Face-up Extra Deck',
+}
+
+const ZONE_BUTTON_LABELS = {
+  monsterZone: 'Main Monster',
+  extraMonsterZone: 'Extra Monster',
+  spellTrapZone: 'Spell & Trap',
+  pendulumZone: 'Pendulum',
+  hand: 'Hand',
+  graveyard: 'Graveyard',
+  banished: 'Banished',
+  extraDeck: 'Extra Deck',
+}
+
 function emptyZones() {
   return {
     monsterZone: [],
@@ -70,6 +92,55 @@ function isMonsterCard(card) {
 
 function isPendulumMonster(card) {
   return isMonsterCard(card) && /pendulum/i.test(card.type || '')
+}
+
+function isExtraDeckMonster(card) {
+  return isMonsterCard(card) && /(fusion|synchro|xyz|link)/i.test(card.type || '')
+}
+
+function isRitualMonster(card) {
+  return isMonsterCard(card) && /ritual/i.test(card.type || '')
+}
+
+function manualPlacementZones(card) {
+  if (isTokenCard(card)) return ['monsterZone', 'extraMonsterZone']
+
+  if (isMonsterCard(card)) {
+    const isExtraDeck = isExtraDeckMonster(card)
+    const isRitual = isRitualMonster(card)
+    const destinations = []
+
+    if (!isExtraDeck || isRitual) destinations.push('hand')
+    destinations.push('monsterZone')
+    if (isExtraDeck || isRitual) destinations.push('extraMonsterZone')
+    if (isPendulumMonster(card) && !isExtraDeck && !isRitual) destinations.push('pendulumZone', 'extraDeck')
+    if (isExtraDeck) destinations.push('extraDeck')
+    destinations.push('graveyard', 'banished')
+    return destinations
+  }
+
+  if (/(spell|trap)/i.test(card.type || '')) {
+    return ['hand', 'spellTrapZone', 'graveyard', 'banished']
+  }
+
+  return ['hand', 'graveyard', 'banished']
+}
+
+function placementCapacityReason(zones, destination) {
+  if (destination === 'monsterZone' && zones.monsterZone.length >= 5) {
+    return 'Main Monster Zones are full'
+  }
+  if (destination === 'extraMonsterZone' && zones.extraMonsterZone.length >= 1) {
+    return 'Extra Monster Zone is occupied'
+  }
+  if (destination === 'pendulumZone') {
+    if (zones.pendulumZone.length >= 2) return 'Pendulum Zones are full'
+    if (zones.spellTrapZone.length + zones.pendulumZone.length >= 5) return 'Shared Spell & Trap slots are full'
+  }
+  if (destination === 'spellTrapZone' && zones.spellTrapZone.length >= 5 - zones.pendulumZone.length) {
+    return 'Spell & Trap Zones are full'
+  }
+  return null
 }
 
 function pendulumScaleRange(zones) {
@@ -316,13 +387,34 @@ function normalizeEffectText(text) {
       .trim()
 }
 
+function usesThisCardFromHand(text) {
+  const lower = text.toLowerCase()
+  return /\bdiscard this card\b/.test(lower)
+      || /\bthis card (?:is|was) in your hand\b/.test(lower)
+      || /\b(?:reveal|send|special summon|normal summon|activate) this card (?:in|from) your hand\b/.test(lower)
+      || /\bthis card from your hand\b/.test(lower)
+      || /\bwhile this card is in your hand\b/.test(lower)
+}
+
+function optionalEffectClause(text) {
+  const levelMatch = text.match(/\bthen you can increase its Level by (\d+)\b/i)
+  if (!levelMatch) return null
+  return {
+    label: `Increase its Level by ${levelMatch[1]}`,
+    levelIncrease: Number(levelMatch[1]),
+  }
+}
+
 function effectSourceZone(text, card, fallbackZone) {
   const lower = text.toLowerCase()
+  if (usesThisCardFromHand(text)) {
+    return 'Hand'
+  }
   if (/\btribute this card\b/.test(lower)) {
     return 'Monster Zone'
   }
   if (/\b(?:if|when) this card (?:is|was) (?:normal or special |normal |special |tribute |flip |ritual |fusion |synchro |xyz |link |pendulum )?summoned\b/.test(lower)) {
-    return 'Monster Zone / Hand'
+    return 'Monster Zone'
   }
   if (/continuous (?:trap|spell)/.test(lower) && /if this card is/.test(lower)) {
     return 'Spell & Trap Zone'
@@ -334,7 +426,7 @@ function effectSourceZone(text, card, fallbackZone) {
     return 'Banished'
   }
   if (fallbackZone) return fallbackZone
-  return /(spell|trap)/i.test(card.type || '') ? 'Spell & Trap Zone' : 'Monster Zone / Hand'
+  return /(spell|trap)/i.test(card.type || '') ? 'Spell & Trap Zone' : 'Monster Zone'
 }
 
 function cardEffectOptions(card, zone = null, entry = null) {
@@ -346,7 +438,7 @@ function cardEffectOptions(card, zone = null, entry = null) {
   if (pendulumMatch) {
     sections = [
       { text: pendulumMatch[1], sourceZone: 'Pendulum Zone' },
-      { text: pendulumMatch[2], sourceZone: 'Monster Zone / Hand' },
+      { text: pendulumMatch[2], sourceZone: 'Monster Zone' },
     ]
   }
 
@@ -354,6 +446,7 @@ function cardEffectOptions(card, zone = null, entry = null) {
       .split(/(?<=[.!?])\s+(?=[A-Z"[])|\n+/)
       .map(text => text.trim())
       .filter(text => text.length > 0)
+      .filter(text => !/^[●•▪◦-]\s*/.test(text))
       .filter(text => !/^you can only (?:use|activate)\b/i.test(text))
       .filter(text => /\b(you can|add|draw|summon|place|set|send|discard|tribute|banish|destroy|return|target|activate)\b/i.test(text))
       .map(text => ({
@@ -365,7 +458,7 @@ function cardEffectOptions(card, zone = null, entry = null) {
     const source = effect.sourceZone.toLowerCase()
     if (zone === 'graveyard') return source === 'graveyard'
     if (zone === 'banished') return source === 'banished'
-    if (zone === 'monsterZone' || zone === 'extraMonsterZone') return source.includes('monster zone') || source.includes('hand')
+    if (zone === 'monsterZone' || zone === 'extraMonsterZone') return source.includes('monster zone')
     if (zone === 'hand') return source.includes('hand') && !isOnSummonEffect(effect)
     if (zone === 'pendulumZone') return source.includes('pendulum zone')
     if (zone === 'spellTrapZone') {
@@ -505,16 +598,16 @@ function SimulatedZones({
                         <div className="sim-zone-card-actions">
                           {['monsterZone', 'extraMonsterZone', 'spellTrapZone', 'pendulumZone'].includes(zone.key)
                               && !isTokenCard(entry.card)
-                              && !extraDeckKind(entry.card) && (
+                              && manualPlacementZones(entry.card).includes('hand') && (
                               <button type="button" onClick={() => onMoveCard(entry, zone.key, 'hand')}>To Hand</button>
                           )}
-                          {zone.key === 'hand' && isMonsterCard(entry.card) && !extraDeckKind(entry.card) && (
+                          {zone.key === 'hand' && manualPlacementZones(entry.card).includes('monsterZone') && (
                               <button type="button" onClick={() => onMoveCard(entry, zone.key, 'monsterZone')}>Summon</button>
                           )}
                           {zone.key === 'hand' && /(spell|trap)/i.test(entry.card.type || '') && (
                               <button type="button" onClick={() => onMoveCard(entry, zone.key, 'spellTrapZone')}>Set</button>
                           )}
-                          {zone.key === 'hand' && /pendulum/i.test(entry.card.type || '') && (
+                          {zone.key === 'hand' && manualPlacementZones(entry.card).includes('pendulumZone') && (
                               <button type="button" onClick={() => onMoveCard(entry, zone.key, 'pendulumZone')}>Set Scale</button>
                           )}
                           <button
@@ -637,12 +730,37 @@ function EffectPicker({ selection, activatedEffects, onChoose, onCancel }) {
           <div className="effect-picker-options">
             {selection.effects.map((effect, index) => {
               const used = activatedEffects.includes(effectUsageKey(selection.entry, effect))
+              const optionalClause = optionalEffectClause(effect.text)
+              if (optionalClause) {
+                return (
+                    <div
+                        key={`${effect.sourceZone}-${effect.text}`}
+                        className={`effect-choice effect-choice-optional${used ? ' is-used' : ''}`}
+                    >
+                      <span className="effect-choice-number">Effect {index + 1}</span>
+                      <span className="effect-choice-zone">From: {effect.sourceZone}</span>
+                      <span className="effect-choice-text">{effect.text}</span>
+                      {used
+                        ? <span className="effect-choice-used">Already activated</span>
+                        : (
+                            <div className="optional-effect-actions">
+                              <button type="button" onClick={() => onChoose(effect, false)}>
+                                Special Summon only
+                              </button>
+                              <button type="button" className="apply-optional" onClick={() => onChoose(effect, true)}>
+                                Special Summon + {optionalClause.label.toLowerCase()}
+                              </button>
+                            </div>
+                          )}
+                    </div>
+                )
+              }
               return (
                   <button
                       key={`${effect.sourceZone}-${effect.text}`}
                       type="button"
                       className="effect-choice"
-                      onClick={() => onChoose(effect, index)}
+                      onClick={() => onChoose(effect, false)}
                       disabled={used}
                   >
                     <span className="effect-choice-number">Effect {index + 1}</span>
@@ -1030,12 +1148,12 @@ function CardDetail({
   const isLink = t.includes('link')
   const isPendulum = t.includes('pendulum')
   const hasImage = Boolean(card.cardImageUrl)
+  const placementOptions = manualPlacementZones(card)
   const hasBadges = oncePerTurn || extender === 'summon extender' || extender === 'add extender' || card.staple === true || card.weight > 0
   const continuingOptions = comboOptions?.filter(option => option.label !== 'ender') ?? []
   const enderOptions = comboOptions?.filter(option => option.label === 'ender') ?? []
 
   function timingLockReason(option) {
-    const timing = option.timing || ''
     const destination = (option.destination || '').toLowerCase()
     const targetType = (option.card.type || '').toLowerCase()
     const mainMonsterCount = zones.monsterZone.length
@@ -1061,37 +1179,47 @@ function CardDetail({
       <div className="wiki-card">
         <div className="wiki-banner" style={{ background: color }}>
           <h2 className="wiki-name">{card.name}</h2>
-          {placementPending && !extraDeckKind(card) && (
+          {placementPending && (
               <div className="card-placement-actions" aria-label={`Place ${card.name}`}>
-                <button type="button" onClick={() => onPlaceSearchResult('hand')}>Add to Hand</button>
-                {isMonster ? (
-                    <button type="button" onClick={() => onPlaceSearchResult('monsterZone')}>Summon</button>
-                ) : (
-                    <button type="button" onClick={() => onPlaceSearchResult('spellTrapZone')}>Set</button>
-                )}
+                <span className="card-placement-label">Place in</span>
+                <div className="card-placement-buttons">
+                  {placementOptions.map(destination => {
+                    const unavailableReason = placementCapacityReason(zones, destination)
+                    return (
+                        <button
+                            key={destination}
+                            type="button"
+                            disabled={Boolean(unavailableReason)}
+                            title={unavailableReason || `Place in ${ZONE_LABELS[destination]}`}
+                            onClick={() => onPlaceSearchResult(destination)}
+                        >
+                          {ZONE_BUTTON_LABELS[destination]}
+                        </button>
+                    )
+                  })}
+                </div>
+                <span className="card-placement-label">Zone</span>
               </div>
-          )}
-          {placementPending && extraDeckKind(card) && (
-              <span className="extra-deck-placement-hint">Use the Extra Deck summon controls</span>
           )}
         </div>
 
         <div className="wiki-body">
-          <div className="wiki-image-col">
-            <div className="wiki-image-frame" style={{ borderColor: color }}>
-              {hasImage ? (
-                <img
-                    src={card.cardImageUrl}
-                    alt={card.name}
-                    className="wiki-image"
-                />
-              ) : (
-                <div className="wiki-image-placeholder">Image unavailable</div>
-              )}
+          <div className="wiki-primary-col">
+            <div className="wiki-image-col">
+              <div className="wiki-image-frame" style={{ borderColor: color }}>
+                {hasImage ? (
+                  <img
+                      src={card.cardImageUrl}
+                      alt={card.name}
+                      className="wiki-image"
+                  />
+                ) : (
+                  <div className="wiki-image-placeholder">Image unavailable</div>
+                )}
+              </div>
             </div>
-          </div>
 
-          <div className="wiki-info-col">
+            <div className="wiki-info-col">
             <div className="wiki-info-panel">
               <WikiRow label="Type">{card.type}</WikiRow>
 
@@ -1229,6 +1357,10 @@ function CardDetail({
               )}
             </div>
 
+            </div>
+          </div>
+
+          <aside className="wiki-zones-col" aria-label="Current field and other zones">
             <div className="wiki-section-header zone-section-header zone-section-heading-row">
               <span>Current Field &amp; Other Zones</span>
               <button type="button" className="clear-zones-btn" onClick={onClearZones}>Clear Zones</button>
@@ -1242,7 +1374,7 @@ function CardDetail({
                 onMoveCard={onMoveCard}
                 onRemoveCard={onRemoveCard}
             />
-          </div>
+          </aside>
         </div>
       </div>
   )
@@ -1376,29 +1508,40 @@ export default function App() {
 
   function placeSearchResult(destination) {
     const card = placementSelection
-    if (!card || !['hand', 'monsterZone', 'spellTrapZone'].includes(destination)) return
-    if (destination === 'monsterZone' && zones.monsterZone.length >= 5) {
-      setError('All 5 Main Monster Zones are occupied.')
+    if (!card || !ZONE_KEYS.includes(destination)) return
+    if (!manualPlacementZones(card).includes(destination)) {
+      setError(`${card.name} cannot be placed in ${ZONE_LABELS[destination]}.`)
       return
     }
-    if (destination === 'spellTrapZone' && zones.spellTrapZone.length >= 5 - zones.pendulumZone.length) {
-      setError(`Only ${5 - zones.pendulumZone.length} Spell & Trap slots are available with the current Pendulum Zones.`)
+    const capacityReason = placementCapacityReason(zones, destination)
+    if (capacityReason) {
+      setError(capacityReason)
       return
     }
 
-    const entry = zoneEntry(card, destination === 'monsterZone'
-      ? 'manual-summon'
-      : destination === 'spellTrapZone'
-        ? 'set-this-turn'
-        : 'added-to-hand')
+    const moveReasons = {
+      hand: 'added-to-hand',
+      monsterZone: 'manual-summon',
+      extraMonsterZone: 'manual-extra-zone-summon',
+      spellTrapZone: 'set-this-turn',
+      pendulumZone: 'placed-in-pendulum-zone',
+      graveyard: 'manually-sent-to-graveyard',
+      banished: 'manually-banished',
+      extraDeck: 'placed-in-extra-deck',
+    }
+    const entry = zoneEntry(
+        card,
+        moveReasons[destination],
+        destination === 'pendulumZone' ? 'Pendulum Card' : null,
+    )
     setComboHistory(prev => [...prev, snapshotComboState()])
     setZones(previous => ({ ...previous, [destination]: [...previous[destination], entry] }))
     setSelectedEntry(entry)
     setActiveZoneContext(destination)
     setPlacementSelection(null)
     setError(null)
-    if (destination === 'monsterZone') {
-      promptOnSummonEffects(card, entry)
+    if (destination === 'monsterZone' || destination === 'extraMonsterZone') {
+      promptOnSummonEffects(card, entry, destination)
     }
   }
 
@@ -1420,14 +1563,14 @@ export default function App() {
     setError(null)
   }
 
-  function promptOnSummonEffects(card, entry) {
+  function promptOnSummonEffects(card, entry, zone = 'monsterZone') {
     if (!entry) return
     const effects = onSummonEffectOptions(card, entry)
     if (effects.length === 0) return
     setEffectSelection({
       card,
       entry,
-      zone: 'monsterZone',
+      zone,
       effects,
       automatic: true,
     })
@@ -1446,8 +1589,16 @@ export default function App() {
   function moveZoneCard(entry, fromZone, toZone) {
     if (!ZONE_KEYS.includes(fromZone) || !ZONE_KEYS.includes(toZone)) return
     if (!zones[fromZone].some(candidate => candidate.instanceId === entry.instanceId)) return
+    if (!manualPlacementZones(entry.card).includes(toZone)) {
+      setError(`${entry.card.name} cannot be moved to ${ZONE_LABELS[toZone]}.`)
+      return
+    }
     if (toZone === 'monsterZone' && zones.monsterZone.length >= 5) {
       setError('All 5 Main Monster Zones are occupied.')
+      return
+    }
+    if (toZone === 'extraMonsterZone' && zones.extraMonsterZone.length >= 1) {
+      setError('The Extra Monster Zone is occupied.')
       return
     }
     if (toZone === 'pendulumZone'
@@ -1850,12 +2001,30 @@ export default function App() {
     })
   }
 
-  async function chooseEffect(effect) {
+  async function chooseEffect(effect, applyOptional = false) {
     if (!effectSelection) return
     const { card, entry, zone } = effectSelection
+    const placesSelfAsContinuousTrap = Boolean(entry
+        && ['monsterZone', 'extraMonsterZone'].includes(zone)
+        && /place this card you control[\s\S]*in your Spell & Trap Zones? as face-up Continuous Traps?/i.test(effect.text))
+    if (placesSelfAsContinuousTrap && placementCapacityReason(zones, 'spellTrapZone')) {
+      setError('The Spell & Trap Zones are full, so this effect cannot place the card there.')
+      return
+    }
+    if (entry
+        && zone === 'spellTrapZone'
+        && /special summon this card/i.test(effect.text)
+        && placementCapacityReason(zones, 'monsterZone')) {
+      setError('The Main Monster Zones are full, so this card cannot be Special Summoned.')
+      return
+    }
     setComboHistory(prev => [...prev, snapshotComboState()])
     setActivatedEffects(prev => [...prev, effectUsageKey(entry, effect)])
-    setActiveEffect(effect)
+    const optionalClause = optionalEffectClause(effect.text)
+    setActiveEffect({
+      ...effect,
+      optionalApplied: Boolean(applyOptional && optionalClause),
+    })
     setComboOptions([])
     setSelected(card)
     setSelectedEntry(entry)
@@ -1882,11 +2051,34 @@ export default function App() {
       })
       resolvedZone = isTokenCard(entry.card) ? null : 'graveyard'
       setSelectedEntry(isTokenCard(entry.card) ? null : tributedEntry)
+    } else if (placesSelfAsContinuousTrap) {
+      const continuousTrapEntry = {
+        ...entry,
+        moveReason: 'placed-as-continuous-trap',
+        treatedAs: 'Continuous Trap',
+        overlayMaterials: [],
+      }
+      setZones(prev => {
+        const next = Object.fromEntries(ZONE_KEYS.map(zoneName => [
+          zoneName,
+          prev[zoneName].filter(candidate => candidate.instanceId !== entry.instanceId),
+        ]))
+        next.spellTrapZone.push(continuousTrapEntry)
+        return next
+      })
+      resolvedZone = 'spellTrapZone'
+      setSelectedEntry(continuousTrapEntry)
     } else if (entry
         && zone === 'spellTrapZone'
         && /special summon this card/i.test(effect.text)) {
       summonedEntry = {
         ...entry,
+        card: applyOptional && optionalClause?.levelIncrease
+          ? {
+              ...entry.card,
+              level: Number(entry.card.level || 0) + optionalClause.levelIncrease,
+            }
+          : entry.card,
         moveReason: 'special-summon',
         treatedAs: null,
       }
@@ -1958,7 +2150,7 @@ export default function App() {
     }
   }
 
-  const showList = cards.length > 1
+  const showList = cards.length > 0
 
   return (
       <div className="app">
