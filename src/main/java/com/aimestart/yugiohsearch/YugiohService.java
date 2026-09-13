@@ -37,8 +37,8 @@ public class YugiohService {
             @JsonProperty("card_images") List<CardImage> cardImages
     ) {}
 
-    public YugiohService(RestClient.Builder builder) {
-        this.restClient = builder.baseUrl(API_BASE_URL).build();
+    public YugiohService() {
+        this.restClient = RestClient.builder().baseUrl(API_BASE_URL).build();
     }
 
     public List<CardData> fetchAllCards() {
