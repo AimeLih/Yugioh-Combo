@@ -17,10 +17,27 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 
 @Service
 public class ComboService {
+
+    private static final Pattern EXACT_LEVEL_PATTERN = Pattern.compile("\\blevel\\s+(\\d+)\\b(?!\\s+or)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MINIMUM_LEVEL_PATTERN = Pattern.compile("\\blevel\\s+(\\d+)\\s+or higher\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MAXIMUM_LEVEL_PATTERN = Pattern.compile("\\blevel\\s+(\\d+)\\s+or lower\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ATK_REQUIREMENT_PATTERN = Pattern.compile("(\\d+)\\s+or\\s+(more|less)\\s+ATK", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DEF_REQUIREMENT_PATTERN = Pattern.compile("(\\d+)\\s+or\\s+(more|less)\\s+DEF", Pattern.CASE_INSENSITIVE);
+    private static final List<String> MONSTER_RACES = List.of(
+            "aqua", "beast", "beast-warrior", "cyberse", "dinosaur", "divine-beast",
+            "dragon", "fairy", "fiend", "fish", "illusion", "insect", "machine",
+            "plant", "psychic", "pyro", "reptile", "rock", "sea serpent",
+            "spellcaster", "thunder", "warrior", "winged beast", "wyrm", "zombie");
+    private static final Map<String, Pattern> RACE_REQUIREMENT_PATTERNS = MONSTER_RACES.stream()
+            .collect(Collectors.toUnmodifiableMap(
+                    race -> race,
+                    race -> Pattern.compile("\\b" + Pattern.quote(race)
+                            + "(?:-type)?(?:\\s+(?:fusion|synchro|xyz|link|ritual|pendulum))?\\s+monsters?\\b")));
 
     private final CardRepository cardRepository;
 
@@ -184,7 +201,7 @@ public class ComboService {
 
         List<String> relevantQuotedTerms = extractQuotedTerms(effectText).stream()
                 .filter(term -> !safeLower(term).equals(safeLower(source.getName())))
-                .collect(Collectors.toList());
+                .toList();
         String mentionedCardName = mentionedCardReference(effectText);
         if (!mentionedCardName.isBlank()
                 && (safeLower(target.getName()).equals(safeLower(mentionedCardName))
@@ -245,7 +262,7 @@ public class ComboService {
                 .filter(card -> safeLower(card.getType()).contains("monster"))
                 .filter(card -> !hasFusionMaterialProhibition(card))
                 .sorted(Comparator.comparing(Card::getName, String.CASE_INSENSITIVE_ORDER))
-                .collect(Collectors.toList());
+                .toList();
 
         List<FusionMaterialSlot> slots = parseFusionMaterialSlots(target).stream()
                 .map(slot -> new FusionMaterialSlot(
@@ -393,7 +410,7 @@ public class ComboService {
             getRelatedArchetypeCards(card).stream()
                     .filter(this::isFusionMonster)
                     .forEach(candidate -> fusionCandidates.put(safeLower(candidate.getName()), candidate));
-            cardRepository.findAll().stream()
+            cardRepository.findByTypeContainingIgnoreCase("fusion").stream()
                     .filter(this::isFusionMonster)
                     .forEach(candidate -> fusionCandidates.putIfAbsent(safeLower(candidate.getName()), candidate));
             candidates = new ArrayList<>(fusionCandidates.values());
@@ -443,12 +460,13 @@ public class ComboService {
             return new EffectPrerequisiteResult(false, costFailure, Collections.emptyList());
         }
 
-        List<Card> allCards = cardRepository.findAll();
-        Map<String, Card> cardsByName = allCards.stream().collect(Collectors.toMap(
-                card -> safeLower(card.getName()),
-                card -> card,
-                (first, ignored) -> first,
-                LinkedHashMap::new));
+        Set<String> placedCardNames = zoneNames.values().stream()
+                .filter(Objects::nonNull)
+                .flatMap(List::stream)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Card> placedCards = placedCardNames.isEmpty()
+                ? Collections.emptyList()
+                : cardRepository.findAllByNameIn(placedCardNames);
 
         String lowerEffect = safeLower(effectText);
         if (lowerEffect.contains("fusion summon")) {
@@ -458,13 +476,26 @@ public class ComboService {
                     normalizedZoneLabel(request.sourceZone()));
             String action = extractFusionMaterialAction(effectText);
             String availableFrom = fusionMaterialSourceZones(action.isBlank() ? effectText : action);
-            List<ZonedMaterial> availableMaterials = fusionMaterialsFromZones(
-                    availableFrom, zoneNames, cardsByName, allCards, source, effectText);
-            List<String> legalTargets = targets.stream()
-                    .filter(option -> canSatisfyFusionMaterials(option.card(), availableMaterials))
-                    .map(option -> option.card().getName())
-                    .distinct()
-                    .collect(Collectors.toList());
+            List<String> legalTargets;
+            if (usesOpenMainDeck(availableFrom)) {
+                legalTargets = targets.stream()
+                        .filter(option -> hasOnlyDeckVerifiableMaterialRequirements(option.card()))
+                        .map(option -> option.card().getName())
+                        .distinct()
+                        .collect(Collectors.toList());
+            } else {
+                List<Card> materialCatalog = materialCatalogFor(availableFrom, placedCards);
+                Map<String, Card> cardsByName = cardsByName(materialCatalog, placedCards);
+                List<ZonedMaterial> availableMaterials = fusionMaterialsFromZones(
+                        availableFrom, zoneNames, cardsByName, materialCatalog, source, effectText);
+                Map<String, List<Integer>> eligibleMaterialIndexes = new LinkedHashMap<>();
+                legalTargets = targets.stream()
+                        .filter(option -> canSatisfyFusionMaterials(
+                                option.card(), availableMaterials, eligibleMaterialIndexes))
+                        .map(option -> option.card().getName())
+                        .distinct()
+                        .collect(Collectors.toList());
+            }
             if (legalTargets.isEmpty()) {
                 return new EffectPrerequisiteResult(
                         false,
@@ -479,8 +510,11 @@ public class ComboService {
             String kind = lowerEffect.contains("synchro summon") ? "Synchro" : "Xyz";
             String action = extractSummonMaterialAction(effectText);
             String availableFrom = fusionMaterialSourceZones(action.isBlank() ? "field" : action);
-            List<Card> availableMaterials = materialCardsFromZones(availableFrom, zoneNames, cardsByName, allCards);
-            List<String> legalTargets = allCards.stream()
+            List<Card> materialCatalog = materialCatalogFor(availableFrom, placedCards);
+            Map<String, Card> cardsByName = cardsByName(materialCatalog, placedCards);
+            List<Card> availableMaterials = materialCardsFromZones(
+                    availableFrom, zoneNames, cardsByName, materialCatalog);
+            List<String> legalTargets = cardRepository.findByTypeContainingIgnoreCase(kind).stream()
                     .filter(card -> safeLower(card.getType()).contains(safeLower(kind)))
                     .filter(card -> matchesTypedSummonTarget(card, effectText, kind))
                     .filter(card -> canSatisfyTypedSummonMaterials(card, availableMaterials, kind))
@@ -498,6 +532,36 @@ public class ComboService {
         }
 
         return new EffectPrerequisiteResult(true, "", null);
+    }
+
+    private List<Card> materialCatalogFor(String availableFrom, List<Card> placedCards) {
+        if (usesOpenMainDeck(availableFrom)) {
+            return cardRepository.findByTypeContainingIgnoreCase("monster");
+        }
+        return placedCards;
+    }
+
+    private boolean usesOpenMainDeck(String availableFrom) {
+        String zones = safeLower(availableFrom);
+        return zones.contains("deck") && !zones.equals("extra deck");
+    }
+
+    private boolean hasOnlyDeckVerifiableMaterialRequirements(Card target) {
+        return parseFusionMaterialSlots(target).stream().allMatch(slot -> {
+            String requirement = safeLower(slot.requirement());
+            return slot.count() <= 3
+                    && !containsAny(requirement,
+                    "on the field", "on your field", "you control", "in the hand", "in your hand",
+                    "in the gy", "in your gy", "in the graveyard", "in your graveyard",
+                    "face-down", "set monster", "special summoned this turn");
+        });
+    }
+
+    private Map<String, Card> cardsByName(List<Card> primaryCards, List<Card> additionalCards) {
+        LinkedHashMap<String, Card> result = new LinkedHashMap<>();
+        primaryCards.forEach(card -> result.putIfAbsent(safeLower(card.getName()), card));
+        additionalCards.forEach(card -> result.putIfAbsent(safeLower(card.getName()), card));
+        return result;
     }
 
     private String activationCostFailure(
@@ -654,12 +718,29 @@ public class ComboService {
                 .forEach(result::add);
     }
 
-    private boolean canSatisfyFusionMaterials(Card target, List<ZonedMaterial> candidates) {
+    private boolean canSatisfyFusionMaterials(
+            Card target,
+            List<ZonedMaterial> candidates,
+            Map<String, List<Integer>> eligibleMaterialIndexes
+    ) {
         List<String> requirements = parseFusionMaterialSlots(target).stream()
-                .flatMap(slot -> Collections.nCopies(slot.count(), slot.requirement()).stream())
-                .collect(Collectors.toList());
+                .flatMap(slot -> Collections.nCopies(slot.count(), slot.requirement()).stream()).sorted(Comparator.comparingInt(requirement -> eligibleMaterialIndexes
+                        .computeIfAbsent(safeLower(requirement), ignored -> eligibleMaterialIndexes(candidates, requirement))
+                        .size())).collect(Collectors.toList());
         return assignZonedMaterialRequirements(
-                requirements, 0, candidates, new boolean[candidates.size()], new ArrayList<>());
+                requirements, 0, candidates, new boolean[candidates.size()], new ArrayList<>(), eligibleMaterialIndexes);
+    }
+
+    private List<Integer> eligibleMaterialIndexes(List<ZonedMaterial> candidates, String requirement) {
+        List<Integer> indexes = new ArrayList<>();
+        for (int index = 0; index < candidates.size(); index++) {
+            ZonedMaterial candidate = candidates.get(index);
+            if (matchesFusionMaterialRequirement(candidate.card(), requirement)
+                    && matchesMaterialZoneRequirement(candidate, requirement)) {
+                indexes.add(index);
+            }
+        }
+        return indexes;
     }
 
     private boolean assignZonedMaterialRequirements(
@@ -667,20 +748,21 @@ public class ComboService {
             int requirementIndex,
             List<ZonedMaterial> candidates,
             boolean[] used,
-            List<ZonedMaterial> chosen
+            List<ZonedMaterial> chosen,
+            Map<String, List<Integer>> eligibleMaterialIndexes
     ) {
         if (requirementIndex >= requirements.size()) {
             return satisfiesCombinedFusionRequirements(requirements, chosen);
         }
-        for (int index = 0; index < candidates.size(); index++) {
+        for (int index : eligibleMaterialIndexes.computeIfAbsent(
+                safeLower(requirements.get(requirementIndex)),
+                ignored -> eligibleMaterialIndexes(candidates, requirements.get(requirementIndex)))) {
             ZonedMaterial candidate = candidates.get(index);
-            if (used[index] || !matchesFusionMaterialRequirement(candidate.card(), requirements.get(requirementIndex))
-                    || !matchesMaterialZoneRequirement(candidate, requirements.get(requirementIndex))) {
-                continue;
-            }
+            if (used[index]) continue;
             used[index] = true;
             chosen.add(candidate);
-            if (assignZonedMaterialRequirements(requirements, requirementIndex + 1, candidates, used, chosen)) {
+            if (assignZonedMaterialRequirements(
+                    requirements, requirementIndex + 1, candidates, used, chosen, eligibleMaterialIndexes)) {
                 return true;
             }
             chosen.remove(chosen.size() - 1);
@@ -900,7 +982,7 @@ public class ComboService {
         List<String> quotedTerms = extractQuotedTerms(requirement);
         if (!quotedTerms.isEmpty()) {
             String quoted = safeLower(quotedTerms.get(0));
-            if (normalized.matches("^\"" + Pattern.quote(quoted) + "\"$")) {
+            if (normalized.equals("\"" + quoted + "\"")) {
                 return name.equals(quoted);
             }
             if (!name.contains(quoted) && !safeLower(card.getArchetype()).contains(quoted)) {
@@ -932,20 +1014,17 @@ public class ComboService {
             }
         }
 
-        Matcher exactLevel = Pattern.compile("\\blevel\\s+(\\d+)\\b(?!\\s+or)", Pattern.CASE_INSENSITIVE)
-                .matcher(requirement);
+        Matcher exactLevel = EXACT_LEVEL_PATTERN.matcher(requirement);
         if (exactLevel.find() && (card.getLevel() == null
                 || card.getLevel() != Integer.parseInt(exactLevel.group(1)))) {
             return false;
         }
-        Matcher minimumLevel = Pattern.compile("\\blevel\\s+(\\d+)\\s+or higher\\b", Pattern.CASE_INSENSITIVE)
-                .matcher(requirement);
+        Matcher minimumLevel = MINIMUM_LEVEL_PATTERN.matcher(requirement);
         if (minimumLevel.find() && (card.getLevel() == null
                 || card.getLevel() < Integer.parseInt(minimumLevel.group(1)))) {
             return false;
         }
-        Matcher maximumLevel = Pattern.compile("\\blevel\\s+(\\d+)\\s+or lower\\b", Pattern.CASE_INSENSITIVE)
-                .matcher(requirement);
+        Matcher maximumLevel = MAXIMUM_LEVEL_PATTERN.matcher(requirement);
         if (maximumLevel.find() && (card.getLevel() == null
                 || card.getLevel() > Integer.parseInt(maximumLevel.group(1)))) {
             return false;
@@ -956,29 +1035,16 @@ public class ComboService {
             return false;
         }
 
-        List<String> requiredMonsterKinds = List.of(
-                        "fusion", "synchro", "xyz", "link", "ritual", "pendulum")
-                .stream()
-                .filter(kind -> Pattern.compile("\\b" + kind + "(?:,|\\s+or|\\s+monster)")
-                        .matcher(normalized)
-                        .find())
-                .collect(Collectors.toList());
+        List<String> requiredMonsterKinds = Stream.of("fusion", "synchro", "xyz", "link", "ritual", "pendulum")
+                .filter(kind -> containsAny(normalized, kind + ",", kind + " or", kind + " monster"))
+                .toList();
         if (!requiredMonsterKinds.isEmpty()
                 && requiredMonsterKinds.stream().noneMatch(type::contains)) {
             return false;
         }
 
-        List<String> races = List.of(
-                "aqua", "beast", "beast-warrior", "cyberse", "dinosaur", "divine-beast",
-                "dragon", "fairy", "fiend", "fish", "illusion", "insect", "machine",
-                "plant", "psychic", "pyro", "reptile", "rock", "sea serpent",
-                "spellcaster", "thunder", "warrior", "winged beast", "wyrm", "zombie");
-        for (String race : races) {
-            boolean requiresRace = Pattern.compile(
-                    "\\b" + Pattern.quote(race)
-                            + "(?:-type)?(?:\\s+(?:fusion|synchro|xyz|link|ritual|pendulum))?\\s+monsters?\\b")
-                    .matcher(normalized)
-                    .find();
+        for (String race : MONSTER_RACES) {
+            boolean requiresRace = RACE_REQUIREMENT_PATTERNS.get(race).matcher(normalized).find();
             if (requiresRace
                     && !race.equals(safeLower(card.getRace()))) {
                 return false;
@@ -995,9 +1061,8 @@ public class ComboService {
     }
 
     private boolean matchesPrintedStatRequirement(Integer cardValue, String requirement, String stat) {
-        Matcher matcher = Pattern.compile(
-                "(\\d+)\\s+or\\s+(more|less)\\s+" + stat,
-                Pattern.CASE_INSENSITIVE).matcher(requirement);
+        Matcher matcher = (stat.equals("ATK") ? ATK_REQUIREMENT_PATTERN : DEF_REQUIREMENT_PATTERN)
+                .matcher(requirement);
         if (!matcher.find()) return true;
         if (cardValue == null) return false;
         int threshold = Integer.parseInt(matcher.group(1));
@@ -1627,7 +1692,7 @@ public class ComboService {
         }
 
         Matcher matcher = Pattern.compile(
-                "(?is)\\[?\\s*pendulum effect\\s*\\]?\\s*(.*?)\\[?\\s*monster effect\\s*\\]?\\s*(.*)")
+                        "(?is)\\[?\\s*pendulum effect\\s*]?\\s*(.*?)\\[?\\s*monster effect\\s*]?\\s*(.*)")
                 .matcher(text);
         if (matcher.find()) {
             return List.of(
@@ -1916,7 +1981,7 @@ public class ComboService {
         }
 
         options.sort(Comparator
-                .comparingInt((ComboOption option) -> option.score()).reversed()
+                .comparingInt(ComboOption::score).reversed()
                 .thenComparing(option -> option.card().getName(), String.CASE_INSENSITIVE_ORDER));
         return options;
     }
