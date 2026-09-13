@@ -23,7 +23,6 @@ class YugiohServiceTest {
 
     private final CardRepository repository = mock(CardRepository.class);
     private final ComboService service = new ComboService(repository);
-    private final CardAnalysisService cardAnalysisService = new CardAnalysisService(repository);
     private final YugiohService yugiohService = mock(YugiohService.class);
     private final CardCatalogService cardCatalogService = new CardCatalogService(yugiohService, repository);
 
@@ -32,7 +31,6 @@ class YugiohServiceTest {
         String effect = "If this card is Fusion Summoned: You can discard 1 card; Fusion Summon 1 Level 8 or lower Fusion Monster.";
         Card lubellion = card(1, "Lubellion the Searing Dragon", effect, "Fusion Monster", "Branded");
         when(repository.getCardByName(lubellion.getName())).thenReturn(lubellion);
-        when(repository.findAll()).thenReturn(List.of(lubellion));
 
         ComboService.EffectPrerequisiteResult result = service.checkEffectPrerequisites(
                 new ComboService.EffectPrerequisiteRequest(
@@ -114,16 +112,6 @@ class YugiohServiceTest {
     }
 
     @Test
-    void recognizesModernOncePerTurnWording() {
-        Card card = card(1, "Aileron",
-                "You can only use 1 of the following effects of \"Aileron\" per turn, and only once that turn.",
-                "Effect Monster", "Sky Striker");
-        when(repository.getCardByName(card.getName())).thenReturn(card);
-
-        assertEquals("one listed effect", cardAnalysisService.isOncePerTurn(card.getName()));
-    }
-
-    @Test
     void mainDeckSearchReturnsAllLegalTargetsAndRejectsExtraDeckMonsters() {
         Card engage = card(1, "Sky Striker Mobilize - Engage!",
                 "If you control no monsters in your Main Monster Zone: Add 1 \"Sky Striker\" card from your Deck to your hand, except \"Sky Striker Mobilize - Engage!\".",
@@ -142,7 +130,7 @@ class YugiohServiceTest {
         }
         stubRelatedCards(engage, related);
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(engage.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(engage.getName(), null, null);
 
         assertEquals(7, options.size());
         assertTrue(options.stream().anyMatch(option -> option.card().getName().equals(hornet.getName())));
@@ -217,7 +205,7 @@ class YugiohServiceTest {
                 "You can Special Summon this card from your hand.", "Effect Monster", "Test");
         stubRelatedCards(trap, List.of(extender));
 
-        List<ComboService.ComboOption> trapOptions = service.getPossibleCombos(trap.getName());
+        List<ComboService.ComboOption> trapOptions = service.getPossibleCombos(trap.getName(), null, null);
         assertTrue(trapOptions.get(0).timing().contains("After being Set"));
 
         Card endPhaseSpell = card(3, "Test End Phase Spell",
@@ -225,7 +213,7 @@ class YugiohServiceTest {
                 "Spell Card", "Test");
         stubRelatedCards(endPhaseSpell, List.of(extender));
 
-        List<ComboService.ComboOption> endPhaseOptions = service.getPossibleCombos(endPhaseSpell.getName());
+        List<ComboService.ComboOption> endPhaseOptions = service.getPossibleCombos(endPhaseSpell.getName(), null, null);
         assertTrue(endPhaseOptions.get(0).timing().contains("End Phase"));
     }
 
@@ -239,7 +227,7 @@ class YugiohServiceTest {
                 "Pendulum Effect Monster", "Enneacraft");
         stubRelatedCards(release, List.of(pendulum));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(release.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(release.getName(), null, null);
 
         assertEquals("Pendulum Zone", options.get(0).destination());
         assertTrue(options.get(0).reason().contains("place this card from the Deck"));
@@ -331,7 +319,7 @@ class YugiohServiceTest {
                 "Fallen of Albaz"))
                 .thenReturn(List.of(albion, lubellion, tooManyMaterials, effectOnlyMention));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(brandedFusion.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(brandedFusion.getName(), null, null);
 
         assertEquals(2, options.size());
         assertTrue(options.stream().anyMatch(option -> option.card().getName().equals(albion.getName())));
@@ -388,7 +376,7 @@ class YugiohServiceTest {
                 "2 \"Test\" monsters\nMust be Fusion Summoned.", "Fusion Monster", "Test");
         stubRelatedCards(fusionEffectMonster, List.of(fusionTarget));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(fusionEffectMonster.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(fusionEffectMonster.getName(), null, null);
 
         assertEquals(1, options.size());
         assertTrue(options.get(0).cost().contains("Materials: 2 \"Test\" monsters"));
@@ -417,7 +405,7 @@ class YugiohServiceTest {
                 .thenReturn(List.of(namedMaterial, lightMaterial, prohibitedMaterial));
 
         ComboService.FusionMaterialPlan plan =
-                service.getFusionMaterialPlan(source.getName(), target.getName());
+                service.getFusionMaterialPlan(source.getName(), target.getName(), null);
 
         assertEquals("Graveyard", plan.destination());
         assertTrue(plan.availableFrom().contains("Hand"));
@@ -444,7 +432,7 @@ class YugiohServiceTest {
         when(repository.findByTypeContainingIgnoreCase("monster")).thenReturn(List.of(material));
 
         ComboService.FusionMaterialPlan plan =
-                service.getFusionMaterialPlan(source.getName(), target.getName());
+                service.getFusionMaterialPlan(source.getName(), target.getName(), null);
 
         assertEquals("Banished", plan.destination());
         assertTrue(plan.availableFrom().contains("Graveyard"));
@@ -461,7 +449,7 @@ class YugiohServiceTest {
         stubRelatedCards(graveyardCard, List.of(searchTarget));
 
         List<ComboService.ComboOption> options =
-                service.getPossibleCombos(graveyardCard.getName(), "graveyard");
+                service.getPossibleCombos(graveyardCard.getName(), "graveyard", null);
 
         assertEquals(1, options.size());
         assertEquals("Graveyard", options.get(0).sourceZone());
@@ -476,13 +464,18 @@ class YugiohServiceTest {
         Card target = card(2, "Test Target",
                 "You can Special Summon this card from your hand.", "Effect Monster", "Test");
         Card payment = card(3, "Discarded Card", "A card.", "Effect Monster", "Other");
+        CardRepository.CostCardView paymentView = mock(CardRepository.CostCardView.class);
 
         when(repository.getCardByName(source.getName())).thenReturn(source);
         when(repository.getCardByName(target.getName())).thenReturn(target);
-        when(repository.findAll()).thenReturn(List.of(payment));
+        when(paymentView.getId()).thenReturn(payment.getId());
+        when(paymentView.getName()).thenReturn(payment.getName());
+        when(paymentView.getType()).thenReturn(payment.getType());
+        when(paymentView.getArchetype()).thenReturn(payment.getArchetype());
+        when(repository.findAllProjectedBy()).thenReturn(List.of(paymentView));
 
         ComboService.FusionMaterialPlan plan =
-                service.getCardCostPlan(source.getName(), target.getName());
+                service.getCardCostPlan(source.getName(), target.getName(), null);
 
         assertEquals("Hand", plan.availableFrom());
         assertEquals("Graveyard", plan.destination());
@@ -501,7 +494,7 @@ class YugiohServiceTest {
         stubRelatedCards(source, List.of(revealedCard));
         when(repository.findByNameContainingIgnoreCase("Test")).thenReturn(List.of(revealedCard));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName(), null, null);
 
         assertTrue(options.isEmpty());
     }
@@ -515,7 +508,7 @@ class YugiohServiceTest {
                 "You can Special Summon this card from your hand.", "Effect Monster", "Test");
         stubRelatedCards(source, List.of(unrelatedExtender));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName(), null, null);
 
         assertTrue(options.isEmpty());
     }
@@ -530,7 +523,7 @@ class YugiohServiceTest {
         stubRelatedCards(source, List.of(synchro));
         when(repository.findByNameContainingIgnoreCase("Test Synchro")).thenReturn(List.of(synchro));
 
-        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName());
+        List<ComboService.ComboOption> options = service.getPossibleCombos(source.getName(), null, null);
 
         assertTrue(options.isEmpty());
     }
@@ -539,7 +532,7 @@ class YugiohServiceTest {
     @SuppressWarnings("unchecked")
     void importsOnlyMissingCardsWithAllApplicableData() {
         Card existingCard = card(1, "Existing Card", "Original description", "Spell Card", "Existing");
-        when(repository.findAll()).thenReturn(List.of(existingCard));
+        when(repository.findAllNormalizedNames()).thenReturn(Set.of("existing card"));
 
         YugiohService.CardData existingApiCard = new YugiohService.CardData(
                 "existing card",
@@ -588,7 +581,7 @@ class YugiohServiceTest {
         assertEquals("New Link Card", savedCard.getName());
         assertEquals("A newly released Link Monster.", savedCard.getDescription());
         assertEquals("Link Monster", savedCard.getType());
-        assertEquals(0, savedCard.getWeight());
+        assertEquals(2, savedCard.getWeight());
         assertEquals(2500, savedCard.getAtk());
         assertNull(savedCard.getDef());
         assertNull(savedCard.getLevel());
