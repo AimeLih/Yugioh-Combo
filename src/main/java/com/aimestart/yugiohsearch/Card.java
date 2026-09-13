@@ -1,9 +1,7 @@
 package com.aimestart.yugiohsearch;
 
 import jakarta.persistence.*;
-import org.hibernate.annotations.Type;
 
-import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,13 +25,13 @@ public class Card {
     @Column(nullable = false)
     private int weight;
 
-    @Column()
+    @Column
     private Integer atk;
 
-    @Column()
+    @Column
     private Integer def;
 
-    @Column()
+    @Column
     private Integer level;
 
     @Column(columnDefinition = "TEXT")
@@ -45,26 +43,20 @@ public class Card {
     @Column(columnDefinition = "TEXT")
     private String archetype;
 
-    @Column()
+    @Column
     private Integer scale;
 
-    @Column()
+    @Column
     private Integer linkvalue;
 
     @Column(name = "LinkMarkers", columnDefinition = "text[]")
     private List<String> linkmarkers = new ArrayList<>();
 
-    @Column()
+    @Column
     private Boolean staple;
 
     @Column(name = "card_image_url", columnDefinition = "TEXT")
     private String cardImageUrl;
-
-
-
-
-
-
     public Card() {
     }
 
