@@ -106,14 +106,6 @@ public class ComboService {
 
     // Combo search orchestration and rulebook filtering
 
-    public List<ComboOption> getPossibleCombos(String cardName) {
-        return getPossibleCombos(cardName, null, null);
-    }
-
-    public List<ComboOption> getPossibleCombos(String cardName, String zone) {
-        return getPossibleCombos(cardName, zone, null);
-    }
-
     public List<ComboOption> getPossibleCombos(String cardName, String zone, String selectedEffect) {
         Card card = requireCard(cardName);
 
@@ -237,10 +229,6 @@ public class ComboService {
 
     // Selectable cost and Fusion Material planning
 
-    public FusionMaterialPlan getFusionMaterialPlan(String sourceName, String targetName) {
-        return getFusionMaterialPlan(sourceName, targetName, null);
-    }
-
     public FusionMaterialPlan getFusionMaterialPlan(
             String sourceName,
             String targetName,
@@ -289,10 +277,6 @@ public class ComboService {
                 restrictions);
     }
 
-    public FusionMaterialPlan getCardCostPlan(String sourceName, String targetName) {
-        return getCardCostPlan(sourceName, targetName, null);
-    }
-
     public FusionMaterialPlan getCardCostPlan(
             String sourceName,
             String targetName,
@@ -323,10 +307,12 @@ public class ComboService {
             String requirement = payment.group(3)
                     .replaceFirst("(?i)^(?:other|of your)\\s+", "")
                     .trim();
-            List<MaterialCardOption> eligibleCards = cardRepository.findAll().stream()
+            List<MaterialCardOption> eligibleCards = cardRepository.findAllProjectedBy().stream()
                     .filter(card -> matchesGeneralCostRequirement(card, requirement))
-                    .sorted(Comparator.comparing(Card::getName, String.CASE_INSENSITIVE_ORDER))
-                    .map(this::toMaterialCardOption)
+                    .sorted(Comparator.comparing(
+                            CardRepository.CostCardView::getName,
+                            String.CASE_INSENSITIVE_ORDER))
+                    .map(card -> new MaterialCardOption(card.getId(), card.getName(), card.getType()))
                     .collect(Collectors.toList());
             slots.add(new FusionMaterialSlot(
                     requirement,
@@ -1071,7 +1057,7 @@ public class ComboService {
                 : cardValue <= threshold;
     }
 
-    private boolean matchesGeneralCostRequirement(Card card, String requirement) {
+    private boolean matchesGeneralCostRequirement(CardRepository.CostCardView card, String requirement) {
         String normalized = safeLower(requirement);
         String type = safeLower(card.getType());
         if (normalized.contains("monster") && !type.contains("monster")) {
