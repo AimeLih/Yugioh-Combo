@@ -17,12 +17,8 @@ import static org.mockito.Mockito.when;
 class YugiohControllerTest {
 
     private final CardCatalogService cardCatalogService = mock(CardCatalogService.class);
-    private final CardAnalysisService cardAnalysisService = mock(CardAnalysisService.class);
     private final ComboService comboService = mock(ComboService.class);
-    private final YugiohController controller = new YugiohController(
-            cardCatalogService,
-            cardAnalysisService,
-            comboService);
+    private final YugiohController controller = new YugiohController(cardCatalogService, comboService);
 
     @BeforeEach
     void configureImportToken() {
@@ -30,30 +26,18 @@ class YugiohControllerTest {
     }
 
     @Test
-    void databaseChangingEndpointsRejectMissingOrInvalidTokens() {
-        assertUnauthorized(() -> controller.importAllCards(null));
-        assertUnauthorized(() -> controller.updatingCards("wrong-token"));
-        assertUnauthorized(() -> controller.updatingExistingCards(null));
-        assertUnauthorized(() -> controller.allCardWeightZero("wrong-token"));
+    void importRejectsMissingToken() {
         assertUnauthorized(() -> controller.importNewCards(null));
 
-        verifyNoInteractions(cardCatalogService, cardAnalysisService, comboService);
+        verifyNoInteractions(cardCatalogService, comboService);
     }
 
     @Test
-    void databaseChangingEndpointsAcceptTheConfiguredToken() {
+    void importAcceptsConfiguredToken() {
         when(cardCatalogService.importNewCards()).thenReturn(4);
 
-        controller.importAllCards("test-import-token");
-        controller.updatingCards("test-import-token");
-        controller.updatingExistingCards("test-import-token");
-        controller.allCardWeightZero("test-import-token");
         YugiohController.ImportResult result = controller.importNewCards("test-import-token");
 
-        verify(cardCatalogService).importAllCards();
-        verify(cardCatalogService).updateExistingCardsWeight();
-        verify(cardCatalogService).updateExistingCards();
-        verify(cardCatalogService).allCardWeightZero();
         verify(cardCatalogService).importNewCards();
         assertEquals(4, result.cardsAdded());
     }
