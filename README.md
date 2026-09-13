@@ -104,7 +104,7 @@ The API starts at `http://localhost:8080`.
 With the backend running against an empty database, import the current card catalog:
 
 ```bash
-curl -X POST -H "X-Import-Token: choose_a_private_local_token" http://localhost:8080/yugioh/import
+curl -X POST -H "X-Import-Token: choose_a_private_local_token" http://localhost:8080/yugioh/admin/import
 ```
 
 The header value must match `IMPORT_TOKEN`. The import can take a moment because it fetches and stores card details and images from YGOPRODeck.
@@ -145,20 +145,12 @@ All endpoints use the `/yugioh` prefix.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/import` | Import card data from YGOPRODeck |
-| `POST` | `/admin/import` | Import newly released cards and clear card caches |
+| `POST` | `/admin/import` | Import cards not already in the database |
 | `GET` | `/card?name=...` | Find one card by exact name |
-| `GET` | `/card/substring?name=...` | Search cards by partial name |
-| `GET` | `/card/all` | Return every stored card |
-| `GET` | `/card/image?name=...` | Return a card image URL |
+| `GET` | `/card/substring?name=...` | Search up to 50 cards by partial name |
 | `GET` | `/card/combos?name=...&zone=...` | Find supported combo routes |
 | `GET` | `/card/fusion-materials?source=...&target=...` | Plan legal Fusion Materials |
 | `GET` | `/card/cost-materials?source=...&target=...` | Plan legal effect costs |
-| `GET` | `/card/pattern?name=...` | Classify extender behavior |
-| `GET` | `/card/onceprturn?name=...` | Inspect once-per-turn wording |
-| `PUT` | `/card/update/database` | Refresh stored card metadata |
-| `PUT` | `/card/update` | Recalculate card weights |
-| `PUT` | `/card/update/zero` | Reset all card weights |
 
 Example:
 
