@@ -87,13 +87,11 @@ public class YugiohController {
         return comboService.getCardCostPlan(source, target, effect);
     }
     //returns cards by substrings
-    @Cacheable(value = "CardsBySubString", key = "#name.toLowerCase()" )
     @GetMapping("/card/substring")
     public List<Card> getCardBySubstring(@RequestParam String name){
         return cardCatalogService.getCardsBySubstring(name);
     }
     //returns all cards in the database
-    @Cacheable("Cards")
     @GetMapping("/card/all")
     public List<Card> getAllCards(){
         return cardCatalogService.getAllCards();

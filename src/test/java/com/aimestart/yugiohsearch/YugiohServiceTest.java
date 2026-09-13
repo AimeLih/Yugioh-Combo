@@ -334,16 +334,20 @@ class YugiohServiceTest {
 
         when(repository.getCardByName(albion.getName())).thenReturn(albion);
         when(repository.getCardByName(mirrorjade.getName())).thenReturn(mirrorjade);
-        when(repository.findAll()).thenReturn(List.of(fallenOfAlbaz, synchroMaterial, unrelatedMonster));
+        when(repository.findByTypeContainingIgnoreCase("monster"))
+                .thenReturn(List.of(fallenOfAlbaz, synchroMaterial, unrelatedMonster));
 
         ComboService.FusionMaterialPlan plan = service.getFusionMaterialPlan(
                 albion.getName(), mirrorjade.getName(), effect);
 
         assertEquals("Hand / Field / Graveyard", plan.availableFrom());
         assertEquals("Banished", plan.destination());
-        assertEquals(List.of(fallenOfAlbaz), plan.slots().get(0).eligibleCards());
-        assertTrue(plan.slots().get(1).eligibleCards().contains(synchroMaterial));
-        assertFalse(plan.slots().get(1).eligibleCards().contains(unrelatedMonster));
+        assertEquals(List.of(fallenOfAlbaz.getName()), plan.slots().get(0).eligibleCards().stream()
+                .map(ComboService.MaterialCardOption::name).toList());
+        assertTrue(plan.slots().get(1).eligibleCards().stream()
+                .anyMatch(candidate -> candidate.name().equals(synchroMaterial.getName())));
+        assertFalse(plan.slots().get(1).eligibleCards().stream()
+                .anyMatch(candidate -> candidate.name().equals(unrelatedMonster.getName())));
     }
 
     @Test
@@ -380,7 +384,8 @@ class YugiohServiceTest {
 
         when(repository.getCardByName(source.getName())).thenReturn(source);
         when(repository.getCardByName(target.getName())).thenReturn(target);
-        when(repository.findAll()).thenReturn(List.of(namedMaterial, lightMaterial, prohibitedMaterial));
+        when(repository.findByTypeContainingIgnoreCase("monster"))
+                .thenReturn(List.of(namedMaterial, lightMaterial, prohibitedMaterial));
 
         ComboService.FusionMaterialPlan plan =
                 service.getFusionMaterialPlan(source.getName(), target.getName());
@@ -388,9 +393,12 @@ class YugiohServiceTest {
         assertEquals("Graveyard", plan.destination());
         assertTrue(plan.availableFrom().contains("Hand"));
         assertEquals(2, plan.slots().size());
-        assertEquals(List.of(namedMaterial), plan.slots().get(0).eligibleCards());
-        assertTrue(plan.slots().get(1).eligibleCards().contains(lightMaterial));
-        assertFalse(plan.slots().get(1).eligibleCards().contains(prohibitedMaterial));
+        assertEquals(List.of(namedMaterial.getName()), plan.slots().get(0).eligibleCards().stream()
+                .map(ComboService.MaterialCardOption::name).toList());
+        assertTrue(plan.slots().get(1).eligibleCards().stream()
+                .anyMatch(candidate -> candidate.name().equals(lightMaterial.getName())));
+        assertFalse(plan.slots().get(1).eligibleCards().stream()
+                .anyMatch(candidate -> candidate.name().equals(prohibitedMaterial.getName())));
     }
 
     @Test
@@ -404,7 +412,7 @@ class YugiohServiceTest {
 
         when(repository.getCardByName(source.getName())).thenReturn(source);
         when(repository.getCardByName(target.getName())).thenReturn(target);
-        when(repository.findAll()).thenReturn(List.of(material));
+        when(repository.findByTypeContainingIgnoreCase("monster")).thenReturn(List.of(material));
 
         ComboService.FusionMaterialPlan plan =
                 service.getFusionMaterialPlan(source.getName(), target.getName());
@@ -450,7 +458,8 @@ class YugiohServiceTest {
         assertEquals("Hand", plan.availableFrom());
         assertEquals("Graveyard", plan.destination());
         assertEquals(1, plan.slots().get(0).count());
-        assertTrue(plan.slots().get(0).eligibleCards().contains(payment));
+        assertTrue(plan.slots().get(0).eligibleCards().stream()
+                .anyMatch(candidate -> candidate.name().equals(payment.getName())));
     }
 
     @Test

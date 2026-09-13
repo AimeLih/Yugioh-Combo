@@ -39,8 +39,9 @@ public class ComboService {
     public record FusionMaterialSlot(
             String requirement,
             int count,
-            List<Card> eligibleCards
+            List<MaterialCardOption> eligibleCards
     ) {}
+    public record MaterialCardOption(Long id, String name, String type) {}
     public record FusionMaterialPlan(
             String action,
             String availableFrom,
@@ -240,7 +241,7 @@ public class ComboService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This route is not a Fusion Summon");
         }
 
-        List<Card> cards = cardRepository.findAll().stream()
+        List<Card> cards = cardRepository.findByTypeContainingIgnoreCase("monster").stream()
                 .filter(card -> safeLower(card.getType()).contains("monster"))
                 .filter(card -> !hasFusionMaterialProhibition(card))
                 .sorted(Comparator.comparing(Card::getName, String.CASE_INSENSITIVE_ORDER))
@@ -252,6 +253,7 @@ public class ComboService {
                         slot.count(),
                         cards.stream()
                                 .filter(candidate -> matchesFusionMaterialRequirement(candidate, slot.requirement()))
+                                .map(this::toMaterialCardOption)
                                 .collect(Collectors.toList())))
                 .collect(Collectors.toList());
 
@@ -304,9 +306,10 @@ public class ComboService {
             String requirement = payment.group(3)
                     .replaceFirst("(?i)^(?:other|of your)\\s+", "")
                     .trim();
-            List<Card> eligibleCards = cardRepository.findAll().stream()
+            List<MaterialCardOption> eligibleCards = cardRepository.findAll().stream()
                     .filter(card -> matchesGeneralCostRequirement(card, requirement))
                     .sorted(Comparator.comparing(Card::getName, String.CASE_INSENSITIVE_ORDER))
+                    .map(this::toMaterialCardOption)
                     .collect(Collectors.toList());
             slots.add(new FusionMaterialSlot(
                     requirement,
@@ -425,6 +428,10 @@ public class ComboService {
                         fusionSummonCost(card, target, description),
                         hasOncePerTurnRestriction(target)))
                 .collect(Collectors.toList());
+    }
+
+    private MaterialCardOption toMaterialCardOption(Card card) {
+        return new MaterialCardOption(card.getId(), card.getName(), card.getType());
     }
 
     public EffectPrerequisiteResult checkEffectPrerequisites(EffectPrerequisiteRequest request) {

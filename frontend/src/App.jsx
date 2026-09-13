@@ -2225,7 +2225,31 @@ export default function App() {
     )
     if (!complete) return
 
-    const materials = materialPlan.slots.flatMap((_, index) => materialSelections[index] ?? [])
+    const selectedMaterials = materialPlan.slots.flatMap((_, index) => materialSelections[index] ?? [])
+    const zoneCards = new Map(
+        ZONE_KEYS.flatMap(zone => zones[zone])
+            .map(entry => [entry.card.name.toLowerCase(), entry.card]),
+    )
+    const hydratedCards = new Map(zoneCards)
+    const missingNames = [...new Set(selectedMaterials
+        .map(card => card.name)
+        .filter(name => !hydratedCards.has(name.toLowerCase())))]
+    if (missingNames.length > 0) {
+      setMaterialLoading(true)
+      try {
+        await Promise.all(missingNames.map(async name => {
+          const response = await fetch(`${API}/yugioh/card?name=${encodeURIComponent(name)}`)
+          if (!response.ok) throw new Error(`Could not load ${name}.`)
+          const card = await response.json()
+          hydratedCards.set(card.name.toLowerCase(), card)
+        }))
+      } catch (requestError) {
+        setMaterialError(requestError.message)
+        setMaterialLoading(false)
+        return
+      }
+    }
+    const materials = selectedMaterials.map(card => hydratedCards.get(card.name.toLowerCase()) ?? card)
     const option = pendingOption
     const destination = materialPlan.destination
     const action = (materialPlan.action || '').toLowerCase()
