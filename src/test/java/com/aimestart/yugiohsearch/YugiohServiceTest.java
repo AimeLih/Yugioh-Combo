@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,8 +65,10 @@ class YugiohServiceTest {
                 "1 DARK Dragon-Type monster + 1 Beast-Type monster", "Fusion Monster", "Branded");
         raceLockedTarget.setLevel(8);
         when(repository.getCardByName(albion.getName())).thenReturn(albion);
-        when(repository.findAll()).thenReturn(List.of(
-                albion, lubellion, fallen, illegalTarget, fieldOnlyTarget, raceLockedTarget));
+        when(repository.findAllByNameIn(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(albion, fallen));
+        when(repository.findByTypeContainingIgnoreCase("fusion")).thenReturn(List.of(
+                albion, lubellion, illegalTarget, fieldOnlyTarget, raceLockedTarget));
         when(repository.findByArchetypeContainingIgnoreCase("Branded"))
                 .thenReturn(List.of(lubellion, fallen, illegalTarget, fieldOnlyTarget, raceLockedTarget));
 
@@ -83,6 +86,31 @@ class YugiohServiceTest {
         assertTrue(unavailable.legalSummonTargets().isEmpty());
         assertTrue(available.available());
         assertEquals(List.of(lubellion.getName()), available.legalSummonTargets());
+    }
+
+    @Test
+    void deckFusionPrerequisitesDoNotLoadTheEntireMonsterCatalog() {
+        String effect = "Fusion Summon 1 Fusion Monster that mentions \"Fallen of Albaz\" as material "
+                + "from your Extra Deck, using 2 monsters from your hand, Deck, or field as material.";
+        Card brandedFusion = card(1, "Branded Fusion", effect, "Spell Card", "Branded");
+        Card albion = card(2, "Albion the Branded Dragon",
+                "\"Fallen of Albaz\" + 1 LIGHT monster\nMust be Fusion Summoned.",
+                "Fusion Monster", "Branded");
+
+        when(repository.getCardByName(brandedFusion.getName())).thenReturn(brandedFusion);
+        when(repository.findAllByNameIn(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(List.of(brandedFusion));
+        when(repository.findByTypeContainingIgnoreCaseAndDescriptionContainingIgnoreCase(
+                "Fusion", "Fallen of Albaz")).thenReturn(List.of(albion));
+
+        ComboService.EffectPrerequisiteResult result = service.checkEffectPrerequisites(
+                new ComboService.EffectPrerequisiteRequest(
+                        brandedFusion.getName(), effect, "spellTrapZone",
+                        Map.of("spellTrapZone", List.of(brandedFusion.getName()))));
+
+        assertTrue(result.available());
+        assertEquals(List.of(albion.getName()), result.legalSummonTargets());
+        verify(repository, never()).findByTypeContainingIgnoreCase("monster");
     }
 
     @Test
@@ -265,7 +293,8 @@ class YugiohServiceTest {
 
         when(repository.getCardByName(albion.getName())).thenReturn(albion);
         when(repository.findByArchetypeContainingIgnoreCase(albion.getArchetype())).thenReturn(List.of());
-        when(repository.findAll()).thenReturn(List.of(albion, legalTarget, tooHigh));
+        when(repository.findByTypeContainingIgnoreCase("fusion"))
+                .thenReturn(List.of(albion, legalTarget, tooHigh));
 
         List<ComboService.ComboOption> options =
                 service.getPossibleCombos(albion.getName(), "monsterZone", fusionEffect);
