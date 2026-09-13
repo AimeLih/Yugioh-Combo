@@ -388,6 +388,30 @@ function normalizeEffectText(text) {
       .trim()
 }
 
+function oncePerTurnLabel(card) {
+  const text = normalizeEffectText(card?.description).toLowerCase()
+  if (/you can only use each (?:effect|of the following effects).*?once per turn/s.test(text)) {
+    return 'one of each'
+  }
+  if (/you can only use (?:1|one) of the following effects.*?(?:once per turn|only once that turn)/s.test(text)) {
+    return 'one listed effect'
+  }
+  if (/you can only activate (?:1|one) .*? per turn/s.test(text)) {
+    return 'one activation'
+  }
+  if (/you can only use (?:this|the) effect.*?once per turn/s.test(text)) {
+    return 'one effect'
+  }
+  return text.includes('once per turn') ? 'once per turn' : null
+}
+
+function extenderLabel(card) {
+  const text = (card?.description || '').toLowerCase()
+  if (/summon\s+\d+/.test(text)) return 'summon extender'
+  if (/add\s+\d+/.test(text)) return 'add extender'
+  return null
+}
+
 function usesThisCardFromHand(text) {
   const lower = text.toLowerCase()
   return /\bdiscard this card\b/.test(lower)
@@ -1583,8 +1607,6 @@ export default function App() {
   const [mode, setMode] = useState('search')
   const [cards, setCards] = useState([])
   const [selected, setSelected] = useState(null)
-  const [oncePerTurn, setOncePerTurn] = useState(null)
-  const [extender, setExtender] = useState(null)
   const [comboPath, setComboPath] = useState([])
   const [comboOptions, setComboOptions] = useState([])
   const [zones, setZones] = useState(emptyZones)
@@ -1597,7 +1619,7 @@ export default function App() {
   const [effectSelection, setEffectSelection] = useState(null)
   const [effectInteractionPending, setEffectInteractionPending] = useState(false)
   const [placementSelection, setPlacementSelection] = useState(null)
-  const [, setSummonEffectQueue] = useState([])
+  const summonEffectQueue = useRef([])
   const [pendingOption, setPendingOption] = useState(null)
   const [materialPlan, setMaterialPlan] = useState(null)
   const [materialSelections, setMaterialSelections] = useState({})
@@ -1609,6 +1631,8 @@ export default function App() {
   const [comboLoading, setComboLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const oncePerTurn = oncePerTurnLabel(selected)
+  const extender = extenderLabel(selected)
 
   function zoneEntry(card, moveReason = 'placed', treatedAs = null) {
     return { instanceId: `zone-${++zoneInstanceId.current}`, card, moveReason, treatedAs }
@@ -1625,24 +1649,6 @@ export default function App() {
       selected,
       selectedEntry,
       activeEffect,
-    }
-  }
-
-  async function fetchCardExtras(card) {
-    setOncePerTurn(null)
-    setExtender(null)
-    try {
-      const [optRes, extRes] = await Promise.all([
-        fetch(`${API}/yugioh/card/onceprturn?name=${encodeURIComponent(card.name)}`),
-        fetch(`${API}/yugioh/card/pattern?name=${encodeURIComponent(card.name)}`),
-      ])
-      if (optRes.ok) {
-        const oncePerTurnText = (await optRes.text()).trim()
-        setOncePerTurn(oncePerTurnText.toLowerCase() === 'not once per turn' ? null : oncePerTurnText)
-      }
-      if (extRes.ok) setExtender((await extRes.text()).trim())
-    } catch {
-      // extras are non-critical
     }
   }
 
@@ -1685,7 +1691,7 @@ export default function App() {
     }
   }
 
-  async function openRootCard(card) {
+  function openRootCard(card) {
     setSelected(card)
     setSelectedEntry(null)
     setComboPath([card])
@@ -1694,12 +1700,11 @@ export default function App() {
     setActiveEffect(null)
     setEffectSelection(null)
     setPlacementSelection(card)
-    setSummonEffectQueue([])
+    summonEffectQueue.current = []
     setExtraDeckPickerOpen(false)
     setPendulumPickerOpen(false)
     closeMaterialPicker()
     setError(null)
-    await fetchCardExtras(card)
   }
 
   function placeSearchResult(destination) {
@@ -1751,7 +1756,7 @@ export default function App() {
     setActiveEffect(null)
     setEffectSelection(null)
     setPlacementSelection(null)
-    setSummonEffectQueue([])
+    summonEffectQueue.current = []
     setComboOptions([])
     setComboPath(selected ? [selected] : [])
     setExtraDeckPickerOpen(false)
@@ -1780,7 +1785,7 @@ export default function App() {
     })
     if (triggered.length === 0) return
     setEffectSelection(triggered[0])
-    setSummonEffectQueue(triggered.slice(1))
+    summonEffectQueue.current = triggered.slice(1)
   }
 
   function moveZoneCard(entry, fromZone, toZone) {
@@ -1853,7 +1858,7 @@ export default function App() {
     setError(null)
   }
 
-  async function performExtraDeckSummon(card, materials) {
+  function performExtraDeckSummon(card, materials) {
     const activeRestriction = summonRestrictionReason(summonRestrictions, card, true)
     if (activeRestriction) {
       setError(activeRestriction)
@@ -1906,7 +1911,6 @@ export default function App() {
     setExtraDeckPickerOpen(false)
     setError(null)
     promptOnSummonEffects(card, summonedEntry)
-    await fetchCardExtras(card)
   }
 
   function openPendulumSummonPicker() {
@@ -1988,7 +1992,7 @@ export default function App() {
     promptSimultaneousSummonEffects(summonedEntries)
   }
 
-  async function finishComboChoice(
+  function finishComboChoice(
       option,
       paidMaterials = [],
       materialDestination = null,
@@ -2111,7 +2115,6 @@ export default function App() {
     if (destinationZone === 'monsterZone') {
       promptOnSummonEffects(card, destinationEntry)
     }
-    await fetchCardExtras(card)
   }
 
   async function chooseComboOption(option) {
@@ -2120,7 +2123,7 @@ export default function App() {
     const selfTributeAlreadyPaid = /\btribute this card\b/i.test(activeEffect?.text || '')
         && /^(?:you can\s+)?tribute this card[;.]?$/i.test((option.cost || '').trim())
     if (!option.cost || selfTributeAlreadyPaid) {
-      await finishComboChoice(option)
+      finishComboChoice(option)
       return
     }
 
@@ -2220,7 +2223,7 @@ export default function App() {
               ? 'banish'
               : 'send'
     closeMaterialPicker()
-    await finishComboChoice(option, materials, destination, paymentReason)
+    finishComboChoice(option, materials, destination, paymentReason)
   }
 
   function effectNeedsPrerequisiteCheck(effect) {
@@ -2290,7 +2293,6 @@ export default function App() {
         }
       }))
       setEffectSelection({ card, entry: resolvedEntry, zone, effects: checkedEffects })
-      await fetchCardExtras(card)
     } finally {
       effectRequestInFlight.current = false
       setEffectInteractionPending(false)
@@ -2299,12 +2301,11 @@ export default function App() {
 
   function closeEffectPicker() {
     setEffectSelection(null)
-    setSummonEffectQueue(queue => {
-      if (queue.length === 0) return queue
-      const [next, ...remaining] = queue
+    if (summonEffectQueue.current.length > 0) {
+      const [next, ...remaining] = summonEffectQueue.current
+      summonEffectQueue.current = remaining
       setEffectSelection(next)
-      return remaining
-    })
+    }
   }
 
   async function chooseEffect(effect, applyOptional = false) {
@@ -2460,11 +2461,10 @@ export default function App() {
     setSelectedEntry(previousState.selectedEntry)
     setActiveEffect(previousState.activeEffect)
     closeEffectPicker()
-    setSummonEffectQueue([])
+    summonEffectQueue.current = []
     closeMaterialPicker()
     setExtraDeckPickerOpen(false)
     setPendulumPickerOpen(false)
-    await fetchCardExtras(previousState.selected)
   }
 
   async function handleSearch(e) {
@@ -2480,13 +2480,13 @@ export default function App() {
         if (!res.ok) throw new Error('Card not found')
         const card = await res.json()
         setCards([card])
-        await openRootCard(card)
+        openRootCard(card)
       } else {
         const res = await fetch(`${API}/yugioh/card/substring?name=${encodeURIComponent(query)}`)
         if (!res.ok) throw new Error('No cards found')
         const list = await res.json()
         setCards(list)
-        if (list.length === 1) await openRootCard(list[0])
+        if (list.length === 1) openRootCard(list[0])
       }
     } catch (err) {
       setError(err.message)
