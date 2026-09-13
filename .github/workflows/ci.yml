@@ -40,7 +40,6 @@ jobs:
       SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/yugioh_test
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgres
-      SPRING_CACHE_TYPE: simple
 
     steps:
       - name: Check out repository
@@ -83,6 +82,9 @@ jobs:
 
       - name: Run frontend lint
         run: npm run lint
+
+      - name: Run frontend tests
+        run: npm test
 
       - name: Build frontend
         run: npm run build
