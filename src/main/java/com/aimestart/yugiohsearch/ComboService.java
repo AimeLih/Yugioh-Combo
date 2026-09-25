@@ -139,28 +139,74 @@ public class ComboService {
         buildExplicitComboRoutes(card, description, drafts);
         buildTextDrivenComboRoutes(card, description, drafts, zoneLabel, !normalizedEffect.isBlank());
 
-        List<ComboOption> options = drafts.values().stream()
-                .filter(draft -> draft.score > 0)
-                .sorted(Comparator
-                        .comparingInt((ComboDraft draft) -> draft.score).reversed()
-                        .thenComparing(draft -> draft.card.getName(), String.CASE_INSENSITIVE_ORDER))
-                .map(draft -> new ComboOption(
-                        draft.card,
-                        joinReasons(draft.reasons),
-                        draft.score,
-                        comboLabelFor(draft.card),
-                        joinMetadata(draft.timings, "Immediate"),
-                        zoneLabel.isBlank()
-                                ? joinMetadata(draft.sourceZones, sourceZoneFor(card))
-                                : zoneLabel,
-                        joinMetadata(draft.destinations, "Varies"),
-                        comboCostFor(card, draft.card, description),
-                        hasOncePerTurnRestriction(draft.card)))
-                .collect(Collectors.toList());
+        // We take every draft that has a score higher than 0
+        List<ComboDraft> validDrafts = new ArrayList<>();
 
-        return mergeComboOptions(fusionTargets, mergeComboOptions(curated, options)).stream()
-                .filter(option -> followsRulebookRouteRules(card, option.card(), description))
-                .collect(Collectors.toList());
+        for(ComboDraft draft: drafts.values()){
+            if(draft.score > 0){
+                validDrafts.add(draft);
+            }
+        }
+        // we compare two draft scores, and if they are equal we compare the card names
+        validDrafts.sort((firstDraft, secondDraft) -> {
+            int scoreComparison = Integer.compare(secondDraft.score, firstDraft.score);
+
+            if(scoreComparison != 0){
+                return scoreComparison;
+            }
+
+            return String.CASE_INSENSITIVE_ORDER.compare(firstDraft.card.getName(), secondDraft.card.getName());
+        });
+
+        //We turn our validdrafts into combooptions now
+        List<ComboOption> options = new ArrayList<>();
+
+        for(ComboDraft draft: validDrafts){
+            String sourceZone;
+
+            if(zoneLabel.isBlank()){
+                sourceZone = joinMetadata(
+                        draft.sourceZones,
+                        sourceZoneFor(card));
+            } else {
+                sourceZone = zoneLabel;
+            }
+
+            ComboOption option = new ComboOption(
+                    draft.card,
+                    joinReasons(draft.reasons),
+                    draft.score,
+                    comboLabelFor(draft.card),
+                    joinMetadata(draft.timings, "Immediate"),
+                    sourceZone,
+                    joinMetadata(draft.destinations, "Varies"),
+                    comboCostFor(card, draft.card, description),
+                    hasOncePerTurnRestriction(draft.card));
+
+            options.add(option);
+        }
+
+        // we merge our options and then remove any of them that are illegal
+        List<ComboOption> curatedAndTextOptions =
+                mergeComboOptions(curated, options);
+
+        List<ComboOption> mergedOptions =
+                mergeComboOptions(fusionTargets, curatedAndTextOptions);
+
+        List<ComboOption> legalOptions = new ArrayList<>();
+
+        for (ComboOption option : mergedOptions) {
+            boolean followsRules = followsRulebookRouteRules(
+                    card,
+                    option.card(),
+                    description);
+
+            if (followsRules) {
+                legalOptions.add(option);
+            }
+        }
+
+        return legalOptions;
     }
 
     private boolean followsRulebookRouteRules(Card source, Card target, String effectText) {
@@ -236,9 +282,11 @@ public class ComboService {
     ) {
         Card source = cardRepository.getCardByName(sourceName);
         Card target = cardRepository.getCardByName(targetName);
+
         if (source == null || target == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Fusion source or target card not found");
         }
+
         String effectText = selectedEffect == null || selectedEffect.isBlank()
                 ? source.getDescription()
                 : selectedEffect;
