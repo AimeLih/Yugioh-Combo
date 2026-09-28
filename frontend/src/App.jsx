@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { activationSummonRestrictions, summonRestrictionReason } from './summonRestrictions.js'
+import { effectSourceZone } from './effectSourceZone.js'
 
 function typeColor(type) {
   if (!type) return '#1a3a5c'
@@ -412,15 +413,6 @@ function extenderLabel(card) {
   return null
 }
 
-function usesThisCardFromHand(text) {
-  const lower = text.toLowerCase()
-  return /\bdiscard this card\b/.test(lower)
-      || /\bthis card (?:is|was) in your hand\b/.test(lower)
-      || /\b(?:reveal|send|special summon|normal summon|activate) this card (?:in|from) your hand\b/.test(lower)
-      || /\bthis card from your hand\b/.test(lower)
-      || /\bwhile this card is in your hand\b/.test(lower)
-}
-
 function optionalEffectClause(text) {
   const levelMatch = text.match(/\bthen you can increase its Level by (\d+)\b/i)
   if (!levelMatch) return null
@@ -428,30 +420,6 @@ function optionalEffectClause(text) {
     label: `Increase its Level by ${levelMatch[1]}`,
     levelIncrease: Number(levelMatch[1]),
   }
-}
-
-function effectSourceZone(text, card, fallbackZone) {
-  const lower = text.toLowerCase()
-  if (usesThisCardFromHand(text)) {
-    return 'Hand'
-  }
-  if (/\btribute this card\b/.test(lower)) {
-    return 'Monster Zone'
-  }
-  if (/\b(?:if|when) this card (?:is|was) (?:normal or special |normal |special |tribute |flip |ritual |fusion |synchro |xyz |link |pendulum )?summoned\b/.test(lower)) {
-    return 'Monster Zone'
-  }
-  if (/continuous (?:trap|spell)/.test(lower) && /if this card is/.test(lower)) {
-    return 'Spell & Trap Zone'
-  }
-  if (/(?:in|from|sent to|while .* in) (?:the |your )?(?:gy|graveyard)/.test(lower)) {
-    return 'Graveyard'
-  }
-  if (/(?:this card|it) is banished|from your banished|among your banished/.test(lower)) {
-    return 'Banished'
-  }
-  if (fallbackZone) return fallbackZone
-  return /(spell|trap)/i.test(card.type || '') ? 'Spell & Trap Zone' : 'Monster Zone'
 }
 
 function cardEffectOptions(card, zone = null, entry = null) {
